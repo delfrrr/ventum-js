@@ -1,0 +1,4 @@
+{
+  "name": "ventum",
+  "main": "./libs/lib.js"
+}
