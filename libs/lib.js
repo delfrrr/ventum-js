@@ -33,7 +33,6 @@ LibClass.prototype = {
     this._levels.forEach(function (path) {
       try {
         this._levelFolders[path] = fs.readdirSync(path);
-        console.log(this._levelFolders[path]);
       } catch (e) {
         this._levelFolders[path] = [];
       }
