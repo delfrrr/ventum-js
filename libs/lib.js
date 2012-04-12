@@ -164,7 +164,6 @@ match = parent.filename.match(/(.*)\/services\/([^\/]+)/);
 if (!match) {
   throw new Error('Allowed to call "ventum" only insine service');
 }
-console.log(require);
 service = match[0];
 app = match[1];
 instance = new LibClass(app, service);
