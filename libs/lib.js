@@ -43,16 +43,22 @@ LibClass.prototype = {
   },
   _require: function (libObj, level, name) {
     var lib,
-      face = this.get.bind(this);
-    if (this._levelFolders[level].indexOf(name + '.js') === -1) {
+      face = this.get.bind(this),
+      fileArr = this._levelFolders[level];
+    if (fileArr.indexOf(name + '.js') === -1) {
+      if (fileArr.indexOf(name) === -1) {
+        return;
+      }
+      if (!fs.statSync(level + name).isDirectory()) {
+        return;
+      }
       return;
     }
     lib = require(level + name);
     if (lib.instance instanceof Function) {
       lib = lib.instance(face);
       libObj.type = libObj.type || 'instance';
-    }
-    if (lib.cls instanceof Function) {
+    } else if (lib.cls instanceof Function) {
       lib = lib.cls(face);
       libObj.type = libObj.type || 'class';
     }
@@ -116,6 +122,9 @@ LibClass.prototype = {
         this._require(libObj, level, name + this.MOD_SEPARATOR + mod);
       }.bind(this));
     }.bind(this));
+    if (!libObj.arr.length) {
+      throw new Error('Can not find module "' + name + '"');
+    }
     libObj.arr.forEach(function (piece) {
       Result = this._merge(Result, piece);
     }.bind(this));
