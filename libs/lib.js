@@ -20,9 +20,8 @@ LibClass = function (app, service) {
   this._levels = [
     __dirname + '/',
     app + '/libs/',
-    app + '/conf/current/',
     service + '/libs/',
-    service + '/conf/current/'
+    service + '/conf/'
   ];
   this._viewLevelsContents();
   return this;
@@ -52,7 +51,6 @@ LibClass.prototype = {
       if (!fs.statSync(level + name).isDirectory()) {
         return;
       }
-      return;
     }
     lib = require(level + name);
     if (lib.instance instanceof Function) {
@@ -76,6 +74,29 @@ LibClass.prototype = {
       this.__base = savedBase;
       return result;
     };
+  },
+  _mergeJSON: function (first, second) {
+    var result = {};
+    if (typeof first !== typeof second) {
+      return second;
+    }
+    Object.keys(first).forEach(function (key) {
+      if (typeof second[key] === 'undefined') {
+        result[key] = first[key];
+        return;
+      }
+      if (typeof first[key] !== 'object') {
+        result[key] = second[key];
+      } else {
+        result[key] = this._mergeJSON(first[key], second[key]);
+      }
+    }.bind(this));
+    Object.keys(second).forEach(function (key) {
+      if (typeof result[key] === 'undefined') {
+        result[key] = second[key];
+      }
+    });
+    return result;
   },
   _merge: function (first, second) {
     var diff = second.prototype || second,
@@ -101,7 +122,7 @@ LibClass.prototype = {
         constructor.prototype[key] = this._extendProtoMethod(first, diff, key);
         continue;
       }
-      constructor.prototype[key] = diff[key];
+      constructor.prototype[key] = this._mergeJSON(constructor.prototype[key], diff[key]);
     }
     return constructor;
   },
