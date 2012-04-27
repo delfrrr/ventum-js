@@ -20,8 +20,11 @@ LibClass = function (app, service) {
   this._levels = [
     __dirname + '/',
     app + '/libs/',
+    app + '/conf/',
+    app + '/conf/local',
     service + '/libs/',
-    service + '/conf/'
+    service + '/conf/',
+    service + '/conf/local'
   ];
   this._viewLevelsContents();
   return this;
