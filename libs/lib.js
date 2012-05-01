@@ -24,7 +24,7 @@ LibClass = function (app, service) {
     app + '/conf/local',
     service + '/libs/',
     service + '/conf/',
-    service + '/conf/local'
+    service + '/conf/local/'
   ];
   this._viewLevelsContents();
   return this;
