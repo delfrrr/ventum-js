@@ -89,12 +89,16 @@ exports.cls = function () {
      */
     end: function (data) {
       var ret;
-      if (data instanceof Buffer) {
-        ret = data;
-      } else {
-        ret = String(data);
+      if (data !== undefined) {
+        if (data instanceof Buffer) {
+          ret = data;
+        } else {
+          ret = String(data);
+        }
+        this._end(ret); 
+      } else  {
+        this._end();
       }
-      this._end(ret);
     },
     /**
      * Finish request and return json as text

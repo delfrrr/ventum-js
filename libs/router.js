@@ -37,7 +37,7 @@ exports.instance = function (Lib) {
     _modelAndAction: function (params, response) {
       var route = params.routeObj,
         model = Lib(route.model);
-      if (!model || typeof model[route.action] !== 'function') {
+      if (!model && typeof model[route.action] !== 'function') {
         Lib('console').error([
           'no such model "',
           route.model,
