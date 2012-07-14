@@ -9,6 +9,7 @@ exports.cls = function (Lib) {
   var http = require('http'),
     Response = Lib('response'),
     Request = Lib('request'),
+    Console = Lib('console'),
     Server;
   /**
    * @contstructor
@@ -31,6 +32,7 @@ exports.cls = function (Lib) {
       port = port || this.PORT;
       ip = ip || this.IP;
       this._server.listen(port, ip);
+      Console.log('http server started at %d port', port);
     },
     /**
      * Closing (stoping) http server

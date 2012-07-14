@@ -69,7 +69,6 @@ exports.cls = function () {
       }
       clearTimeout(this._timeout);
       time = Math.min(time, this.MAX_TIMEOUT) - Date.now() + this._startTime;
-      console.log(time);
       this._setTimeout(time);
       return this;
     },
