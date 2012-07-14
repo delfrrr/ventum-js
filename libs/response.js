@@ -16,10 +16,20 @@ exports.cls = function () {
   Response.prototype = {
     DEFAULT_TIMEOUT: 5000,
     MAX_TIMEOUT: 30000,
+    DEFAULT_CHARSET: 'UTF-8',
     _setTimeout: function (time) {
       this._timeout = setTimeout(function () {
         this.error(504);
       }.bind(this), time);
+    },
+    _setContentTypeHeader: function (contentType, charset) {
+      if(charset === undefined) {
+        charset = this.DEFAULT_CHARSET;
+      }
+      if (charset) {
+        contentType += '; charset=' + charset;
+      }
+      this.headers({'Content-Type': contentType});
     },
     _getErrorPage: function (status) {
       return {
@@ -106,8 +116,8 @@ exports.cls = function () {
      *
      * @param {Object} json
      */
-    writeJSON: function (json) {
-      this.headers({'Content-Type': 'application/json'});
+    writeJSON: function (json, charset) {
+      this._setContentTypeHeader('application/json', charset);
       this._end(JSON.stringify(json));
     },
     /**
@@ -117,9 +127,9 @@ exports.cls = function () {
      * @param {Object} json
      * @param {String} callbackName Name of function on client-side
      */
-    writeJSONP: function (json, callbackName) {
+    writeJSONP: function (json, callbackName, charset) {
       var st = callbackName + '(' + JSON.stringify(json) + ');';
-      this.headers({'Content-Type': 'text/javascript'});
+      this._setContentTypeHeader('text/javascript', charset);
       this._end(st);
     },
     /**
