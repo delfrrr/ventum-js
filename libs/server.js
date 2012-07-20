@@ -10,6 +10,7 @@ exports.cls = function (Lib) {
     Response = Lib('response'),
     Request = Lib('request'),
     Console = Lib('console'),
+    exec = require('child_process').exec,
     Server;
   /**
    * @contstructor
@@ -31,7 +32,7 @@ exports.cls = function (Lib) {
     start: function (port, ip) {
       port = port || this.PORT;
       ip = ip || this.IP;
-      this._server.listen(port, ip);
+      this._server.listen(port, ip); 
       Console.log('http server started at %d port', port);
     },
     /**

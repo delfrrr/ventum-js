@@ -60,7 +60,7 @@ exports.instance = function (Lib) {
           .join(', ')
           .replace(/\s+/g, ' ');
       }
-      return '[' + this._date(this.FORMAT) + '] ' + message + "\r\n";
+      return '[' + this._date(this.FORMAT) + '] ' + message;
     },
     /**
      * Javascript version of PHP function date.
