@@ -21,7 +21,7 @@ LibClass = function (app, service) {
     __dirname + '/',
     app + '/libs/',
     app + '/conf/',
-    app + '/conf/local',
+    app + '/conf/local/',
     service + '/libs/',
     service + '/conf/',
     service + '/conf/local/'
