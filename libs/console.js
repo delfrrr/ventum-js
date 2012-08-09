@@ -86,17 +86,17 @@ exports.instance = function (Lib) {
     /**
      * Write error in std_error with Appace like message
      * 
-     * @param {string|Error} message The message or instance of Error
-     * @param {number|undefined} stackCount count of stacks in error message
+     * @param {String|Error} message The message or instance of Error
+     * @param {Number} [stackCount] count of stacks in error message
      */
-    error: function () {
-      var message = this._message(util.format.apply(util, arguments), this.MAX_STACK);
+    error: function (message, stackCount) {
+      var message = this._message(message, typeof stackCount === 'number' ? stackCount : this.MAX_STACK);
       console.error(message);
     },
     /**
      * Write message in std_out
      *
-     * @param {string} message The message to write
+     * @param {String} message The message to write
      */
     log: function () {
       var message = this._message(util.format.apply(util, arguments), false);
