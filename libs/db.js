@@ -157,6 +157,11 @@ PostgresDriver.prototype.queryAsync = function (query, data, callback) {
     callback(answer);
   });
 };
+/* create object that represents query argument, that will be used as list of coma separated values for sql IN operator
+ * @public
+ * @param {Array<*>} array array that contains values to be used in sql expression like  IN (val1, val2, val3 , ...) 
+ * @return Object
+ * */
 PostgresDriver.prototype.inEscape = function (array) {
   return {
     data: array,
@@ -170,6 +175,12 @@ PostgresDriver.prototype.inEscape = function (array) {
     }
   };
 };
+/* create object that represents query argument,  ARGUMENT WILL NOT BE ESCAPED IN ANY WAY
+ * use only if understand why or else may cause sql injection
+ * @public
+ * @param {String} text  string that contains argument
+ * @return Object
+ * */
 PostgresDriver.prototype.noEscape = function (text) {
   //that's dangerous. Use only if shure
   return {
@@ -179,6 +190,12 @@ PostgresDriver.prototype.noEscape = function (text) {
     }
   };
 };
+/* create object that represents query argument, argument is field name, table name, database name, user name or name of other database part
+ * field will be escaped with  " symbol  
+ * @public
+ * @param {String} field name to be pasted and escaped in query 
+ * @return Object
+ * */
 PostgresDriver.prototype.field = function (field) {
   var self = this;
   return {
@@ -188,6 +205,11 @@ PostgresDriver.prototype.field = function (field) {
     }
   };
 };
+/* create object that represents query argument, argument is any common value, text numbers, null or undefined
+ * @public
+ * @param {String|Number|null|undefined} text 
+ * @return Object
+ * */
 PostgresDriver.prototype.escapeString = function (text) {
   var self = this,
     argStorage = {data: text};
@@ -200,6 +222,11 @@ PostgresDriver.prototype.escapeString = function (text) {
   };
   return argStorage;
 };
+/* escape identifier (table,database, schema, user name) before placing it in query
+ * @_private
+ * @param {String} field 
+ * @return Object
+ * */
 PostgresDriver.prototype.escapeField = function (field) {
   return '"' + field.replace(/(\\)*"/g, function (fullMatch, escapeSeqMatch) {
     if (escapeSeqMatch === undefined) {
@@ -211,6 +238,12 @@ PostgresDriver.prototype.escapeField = function (field) {
 PostgresDriver.prototype.escapeText = function (text) {
   throw new Error('not implemented');
 };
+/* create query argument that represents row that need to be inserted by INSERT statement
+ * f.e. INSERT INTO tbl_name $ 
+ * @public
+ * @param {Object} row object -- key-value pairs that represents row to be inserted. key is name of field in database, value is value to be inserted 
+ * @return Object
+ * */
 PostgresDriver.prototype.insertRow = function (row) {
   var self = this,
     argStorage = {data: row};
@@ -225,8 +258,14 @@ PostgresDriver.prototype.insertRow = function (row) {
     }
     return '(' + keys.join(', ') + ') VALUES ( ' + placeholders.join(', ') + ' )';
   };
-  return argStorage;
+  return argStorage;j
 };
+/* create query argument that represents multiple rows that need to be inserted by INSERT statement
+ * f.e. INSERT INTO tbl_name $ 
+ * @public
+ * @param {Array} rows array, that contains set of rows to be insered. every row  object, that represents one row, like in PostgresDriver.insertRow
+ * @return Object
+ * */
 PostgresDriver.prototype.insertMultiRow = function (rows) {
   var self = this,
     argStorage = {data: rows};
@@ -253,6 +292,12 @@ PostgresDriver.prototype.insertMultiRow = function (rows) {
   };
   return argStorage;
 };
+/* create query argument that represents new row values, that has to be stored in database using UPDATE statement
+ * f.e. UPDATE tbl_name set ($)  where true
+ * @public
+ * @param {Object} row object, that represents one row, like in PostgresDriver.insertRow
+ * @return Object
+ * */
 PostgresDriver.prototype.updateRow = function (row) {
   var self = this,
     argStorage = {data: row};
@@ -266,6 +311,11 @@ PostgresDriver.prototype.updateRow = function (row) {
   };
   return argStorage;
 };
+/* mysql database driver
+ * @constructor
+ * @param {String} db  database identifier
+ * @param {Object} database connection configuration
+ * */
 var MysqlDriver = function (db, config) {
   DbDriver.apply(this, arguments);
   var Mysql     = require('mysql-libmysqlclient');
@@ -286,6 +336,12 @@ var MysqlDriver = function (db, config) {
   this._connection.setCharsetSync(this.config.charset);
 };
 util.inherits(MysqlDriver, DbDriver);
+/* run query in syncronous mode 
+ * @private
+ * @param {string} query
+ * @param {} data  query arguments
+ * @return {QueryResult}
+ * */
 MysqlDriver.prototype.querySync = function (query, data) {
   var res = this._connection.querySync(query),
     answer = new QueryResult();
@@ -303,6 +359,13 @@ MysqlDriver.prototype.querySync = function (query, data) {
   }
   return answer;
 };
+/* run query in asyncronous mode 
+ * @private
+ * @param {string} query
+ * @param {} data  query arguments
+ * @param {function(QueryResult)} callback to be called when query is done 
+ * @return {undefined} returns nothing. result is provided as argument for callback
+ * */
 MysqlDriver.prototype.queryAsync = function (query, data, callback) {
   var self = this,
     res = this._connection.query(query, function (err, res) {
@@ -335,6 +398,12 @@ MysqlDriver.prototype.queryAsync = function (query, data, callback) {
       }
     });
 };
+/* escape identifier (table,database, schema, user name) before placing it in query
+ * use ` symbol
+ * @private
+ * @param {String} field 
+ * @return Object
+ * */
 MysqlDriver.prototype.escapeField = function (field) {
   return '`' + field.replace(/`+/g, function (matches) {
     if (matches.length % 2 === 0) {
@@ -343,6 +412,12 @@ MysqlDriver.prototype.escapeField = function (field) {
     return matches + '`';
   }) + '`';
 };
+/* escape test before placing it in query
+ * use ' symbol
+ * @private
+ * @param {String} field 
+ * @return Object
+ * */
 MysqlDriver.prototype.escapeText = function (text) {
   if (text === null || text === undefined) {
     return 'NULL';
@@ -352,6 +427,11 @@ MysqlDriver.prototype.escapeText = function (text) {
   }
   return '\'' + this._connection.escapeSync(String(text)) + '\'';
 };
+/* create object that represents text argument query
+ * @public
+ * @param {Strin,g} text 
+ * @return Object
+ * */
 MysqlDriver.prototype.escapeString = function (text) {
   var self = this,
     argStorage = {data: text};
@@ -360,6 +440,12 @@ MysqlDriver.prototype.escapeString = function (text) {
   };
   return argStorage;
 };
+/* create object that represents query argument, argument is field name, table name, database name, user name or name of other database part
+ * field will be escaped with  ` symbol  
+ * @public
+ * @param {String} field name to be pasted and escaped in query 
+ * @return Object
+ * */
 MysqlDriver.prototype.field = function (field) {
   var self = this,
     argStorage = {data: field};
@@ -368,6 +454,11 @@ MysqlDriver.prototype.field = function (field) {
   };
   return argStorage;
 };
+/* create object that represents query argument, that will be used as list of coma separated values for sql IN operator
+ * @public
+ * @param {Array<*>} array array that contains values to be used in sql expression like  IN (val1, val2, val3 , ...) 
+ * @return Object
+ * */
 MysqlDriver.prototype.inEscape = function (array) {
   var self = this,
     argStorage = {data: array};
@@ -378,6 +469,12 @@ MysqlDriver.prototype.inEscape = function (array) {
   };
   return argStorage;
 };
+/* create query argument that represents row that need to be inserted by INSERT statement
+ * f.e. INSERT INTO tbl_name $ 
+ * @public
+ * @param {Object} row object -- key-value pairs that represents row to be inserted. key is name of field in database, value is value to be inserted 
+ * @return Object
+ * */
 MysqlDriver.prototype.insertRow = function (row) {
   var self = this,
     argStorage = {data: row};
@@ -393,6 +490,12 @@ MysqlDriver.prototype.insertRow = function (row) {
   };
   return argStorage;
 };
+/* create query argument that represents multiple rows that need to be inserted by INSERT statement
+ * f.e. INSERT INTO tbl_name $ 
+ * @public
+ * @param {Array} rows array, that contains set of rows to be insered. every row  object, that represents one row, like in MysqlDriver.insertRow
+ * @return Object
+ * */
 MysqlDriver.prototype.insertMultiRow = function (rows) {
   var self = this,
     argStorage = {data: rows};
@@ -417,6 +520,12 @@ MysqlDriver.prototype.insertMultiRow = function (rows) {
   };
   return argStorage;
 };
+/* create query argument that represents new row values, that has to be stored in database using UPDATE statement
+ * f.e. UPDATE tbl_name set ($)  where true
+ * @public
+ * @param {Object} row object, that represents one row, like in MysqlDriver.insertRow
+ * @return Object
+ * */
 MysqlDriver.prototype.updateRow = function (row) {
   var self = this,
     argStorage = {data: row};
@@ -430,6 +539,11 @@ MysqlDriver.prototype.updateRow = function (row) {
   };
   return argStorage;
 };
+/* class that represents one database
+ * @constructor
+ * @param {String} dbName identifier of database 
+ * @param {Object} dbConfiguration object that contains configuration for connection to database
+ * */
 var Db = function (dbName, dbConfiguration) {
   var backendDriver = '';
   switch (dbConfiguration.driver) {
@@ -448,6 +562,14 @@ var Db = function (dbName, dbConfiguration) {
   this.statistics = false;
 };
 Db.prototype = {
+  /* run query using apropriate database driver
+   * query is executed in asyncronous if last argument is function
+   * @public
+   * @param {String} query 
+   * @param {Array|function(QueryResult)|undefined} data. If data is Array -- than use it as query arguments. if function, and is last argument that use as callback to be called after query is done
+   * if undefined, and is last argument -- that run query in syncronous mode, without any arguments
+   * return {QueryResult|undefined} if run in syncronous mode -- return result of query. if run in asyncronous -- return nothing. query result will be returned trough callback
+   * */
   query: function (query, data) {
     var callback,
       timeStart,
@@ -486,39 +608,71 @@ Db.prototype = {
     }
     return this._backend.query(query, data, callback);
   },
+  /* enable statistic collection for current database 
+   * @public
+   * */
   enableStatistics: function () {
     if (!this.statistics) {
       this.statistics = {};
     }
   },
+  /* clean statistics (delete all remembered queries and their execution times and counts)
+   * @public
+   * */
   clearStatisics: function () {
     this.statistics = {};
   },
+  /* create object that represents row to be inserted by INSERT sql statement using apropriate database driver
+   * @public
+   * */
   insertRow: function (row) {
     //row is key/value object
     return this._backend.insertRow(row);
   },
+  /* create object that represents multiple rows to be inserted by INSERT sql statement using apropriate database driver
+   * @public
+   * */
   insertMultiRow: function (row) {
     //row is key/value object
     return this._backend.insertMultiRow(row);
   },
+  /* create object that represents row values  to be stored in database by UPDATE sql statement using apropriate database driver
+   * @public
+   * */
   updateRow: function (row) {
     //row is key/value object
     return this._backend.updateRow(row);
   },
+  /* create object that represents identifier for some database object(table, schema, database)  using apropriate database driver
+   * @public
+   * */
   field: function (field) {
     return this._backend.field(field);
   },
+  /* create object that represents query argument, that has not be escaped in any way
+   * dangerous. use if you are really know what you are doing
+   * @public
+   * */
   noEscape: function (text) {
     return this._backend.noEscape(text);
   },
+  /* create object that represents values for sql IN statement using apropriate database driver 
+   * @public
+   * */
   inEscape: function (array) {
     return this._backend.inEscape(array);
   },
+  /* create object that represents normal text, that has to be placed in query. escaping is done by apropriate database driver 
+   * @public
+   * */
   escapeString: function (text) {
     return this._backend.escapeString(text);
   }
 };
+/* database conection manager class
+ * @constructor
+ * @return {function(String)} returns function, that is interface to connection manager(lookup method from DbInstanceManager.prototype)
+ * */
 var DbInstanceManager = function () {
   this.databaseInstances = {};
   var lookup = this.lookup.bind(this);
@@ -526,6 +680,11 @@ var DbInstanceManager = function () {
   return lookup;
 };
 DbInstanceManager.prototype = {
+  /* interface, that is exported by DbInstanceManager to outer world
+   * @public
+   * @param {String} dbName identifier of database. 
+   * @return {Db} returns instance of class Db, that is connected to database identified with dbName. If connection already opened -- return it. if no connection -- try to  connect, and return if successfull
+   */
   lookup: function (dbName) {
     if (this.databaseInstances[dbName] !== undefined) {
       return this.databaseInstances[dbName];
