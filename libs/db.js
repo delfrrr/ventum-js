@@ -258,7 +258,7 @@ PostgresDriver.prototype.insertRow = function (row) {
     }
     return '(' + keys.join(', ') + ') VALUES ( ' + placeholders.join(', ') + ' )';
   };
-  return argStorage;j
+  return argStorage;
 };
 /* create query argument that represents multiple rows that need to be inserted by INSERT statement
  * f.e. INSERT INTO tbl_name $ 
@@ -570,23 +570,23 @@ Db.prototype = {
    * if undefined, and is last argument -- that run query in syncronous mode, without any arguments
    * return {QueryResult|undefined} if run in syncronous mode -- return result of query. if run in asyncronous -- return nothing. query result will be returned trough callback
    * */
-  query: function (query, data) {
+  query: function (query) {
     var callback,
       timeStart,
       originalCallback,
       tmp,
-      queryData = data;
-    if (arguments[arguments.length - 1] instanceof Function) {
-      callback = Array.prototype.pop.apply(arguments);
-    }
-    if (arguments.length === 1 && (data.prepareForQuery instanceof Function || !(data instanceof Array || data instanceof Object))) {
-      queryData = [data];
-    } else {
       queryData = [];
-      Array.prototype.forEach.call(arguments, function (item) {
-        queryData.push(item);
-      });
+    //remove query from arguments
+    if (arguments[arguments.length - 1] instanceof Function) {
+      callback =  Array.prototype.pop.apply(arguments);
     }
+    Array.prototype.slice.call(arguments, 1).forEach(function (arg) {
+      if (queryData instanceof Array) {
+        queryData = queryData.concat(arg);
+      } else {
+        queryData.push(arg);
+      }
+    });
     if (this.statistics) {
       if (this.statistics[query] === undefined) {
         this.statistics[query] = {count: 0, time: 0};
@@ -606,7 +606,7 @@ Db.prototype = {
       this.statistics[query].time += Date.now() - timeStart;
       return tmp;
     }
-    return this._backend.query(query, data, callback);
+    return this._backend.query(query, queryData, callback);
   },
   /* enable statistic collection for current database 
    * @public
