@@ -1,9 +1,10 @@
-/* @fileOverview library to work with databases 
+/* @fileOverview library to work with databases
  * currently postgres via pg and mysql via mysql-libmysqlclient implemented
  * */
 var Lib = require('ventum');
 var Console = Lib('console');
 var util = require('util');
+var EventEmitter = require('events').EventEmitter;
 /* @class represents result of query. contain rows and/or error status
  * */
 var QueryResult = function () {
@@ -12,7 +13,7 @@ var QueryResult = function () {
   this.error = null;
 };
 QueryResult.prototype = {
-  /* kill current process if query, result of  is represented by instance of QueryResult class 
+  /* kill current process if query, result of  is represented by instance of QueryResult class
    * ends with error
    * print error, and stack trace to make it easier to locate problem query
    * @public
@@ -40,86 +41,256 @@ QueryResult.prototype = {
  * @param {Object} config configuration parameters for connection
  * */
 var DbDriver = function (db, config) {
+  EventEmitter.call(this);
   this.db = db;
   this.config = config;
+  this._connection = false;
+  /* flag. means that now connection in connecting state 
+   * @type {Boolean}
+   * @private
+   * */
+  this._connecting = false;
+  /* flag. means that connection is ok
+   * @type {Boolean}
+   * @private
+   * */
+  this._connected  = false;
+  this.statistics = false;
 };
-DbDriver.prototype = {
-  /* prepare query to be executed. transform placeholders into form, that driver understands.
-   * understand what data corresponds to what placeholder
-   * wrap data in internal storage classes, which stores information about how data has to be transformed and escaped (for example array, that will be inserted as one row)
-   * @private
-   * @param {String} query query to execute
-   * @param {Object|String|Number} data query arguments
-   * @return {{query:String, data:Array}} prepared query and data
-   * */
-  prepareQuery: function (query, data) {
-    var i = 0,
-      context = {},
-      preparedData  = [],
-      preparedQuery = query.replace(/\$((\d+)|([\w_]+))*/ig, function (match, identifier, digit, name) {
-        var placeholderNum;
-        if (identifier === undefined || identifier === '') {
-          placeholderNum = i++;
-        } else if (digit !== undefined  && digit !== '') {
-          placeholderNum = identifier - 1;
-        }
-        if (data[placeholderNum] === undefined) {
-          Console.error(data);
-          Console.error(arguments);
-          throw new Error('undefined variable ' + placeholderNum + ' for query');
-        }
-        //null.prepareForQuery === undefined produces exception
-        //undefined.prepareForQuery === undefined produces.exception
-        //additional checks to avod it
-        if (data[placeholderNum] === null || data[placeholderNum] === undefined || !(data[placeholderNum].prepareForQuery instanceof Function)) {
-          data[placeholderNum] = this.escapeString(data[placeholderNum]);
-        }
-        return data[placeholderNum].prepareForQuery(preparedData, placeholderNum, data, context, arguments);
-      }.bind(this));
-    return {query: preparedQuery, data: preparedData};
-  },
-  /* run query. 
-   * @public
-   * @param {String} query query with placeholders
-   * @param {Array<{*}>} data  arguments to query
-   * @param {function|undefined} callback. callback to call in asyncronous mode. if present -- work in asyncronous mode. if absent -- in syncronous
-   * @return {undefined|QueryResult} return QueryResult if working in syncronous mode, or return nothing in syncronous. in asyncronous mode, query result is returned as argument of callback
-   * */
-  query: function (query, data, callback) {
-    var queryAndData = this.prepareQuery(query, data);
-    if (callback === undefined) {
-      return this.querySync(queryAndData.query, queryAndData.data);
+util.inherits(DbDriver, EventEmitter);
+/* prepare query to be executed. transform placeholders into form, that driver understands.
+ * understand what data corresponds to what placeholder
+ * wrap data in internal storage classes, which stores information about how data has to be transformed and escaped (for example array, that will be inserted as one row)
+ * @private
+ * @param {String} query query to execute
+ * @param {Object|String|Number} data query arguments
+ * @return {{query:String, data:Array}} prepared query and data
+ * */
+DbDriver.prototype.prepareQuery = function (query, data) {
+  var i = 0,
+    context = {},
+    preparedData  = [],
+    preparedQuery = query.replace(/\$((\d+)|([\w_]+))*/ig, function (match, identifier, digit, name) {
+      var placeholderNum;
+      if (identifier === undefined || identifier === '') {
+        placeholderNum = i++;
+      } else if (digit !== undefined  && digit !== '') {
+        placeholderNum = identifier - 1;
+      }
+      if (data[placeholderNum] === undefined) {
+        Console.error(data);
+        Console.error(arguments);
+        throw new Error('undefined variable ' + placeholderNum + ' for query');
+      }
+      //null.prepareForQuery === undefined produces exception
+      //undefined.prepareForQuery === undefined produces.exception
+      //additional checks to avod it
+      if (data[placeholderNum] === null || data[placeholderNum] === undefined || !(data[placeholderNum].prepareForQuery instanceof Function)) {
+        data[placeholderNum] = this.escapeString(data[placeholderNum]);
+      }
+      return data[placeholderNum].prepareForQuery(preparedData, placeholderNum, data, context, arguments);
+    }.bind(this));
+  return {query: preparedQuery, data: preparedData};
+};
+/* connect in asyncronous way to database
+ * has to be implemented in database driver
+ * call callback, when connection is ready, or on connection error
+ * @private
+ * @param {function({Object|Error|null})} callback. function to call, when connection is ready, or connecting fails
+ * @return {undefined} nothing has to be returned
+ * */
+DbDriver.prototype._driverSpecificConnectAsync = function (callback) {
+  throw new Error("_driverSpecificConnectAsync has to be implemented in driver");
+};
+/* connect to database in syncronous mode.
+ * has to be implemented by database driver
+ * @private
+ * @return {null|QueryResult} return null if connection succeeded or return something other,
+ * that represents connection error
+ * */
+DbDriver.prototype._driverSpecificConnectSync = function () {
+  throw new Error("_driverSpecificConnectSync has to be implemented in driver");
+};
+/* get connection in asyncronous way.
+ * if connection is present and ready then call callback
+ * if connection is not ready put current query in queue, that will be executed on connect event
+ * if there are no connection initialize connecting process
+ * @private
+ * @return {undefined} nothing to return;
+ * */
+DbDriver.prototype._getConnectionAsync = function (callback) {
+  if (this._connection && this._connected) {
+    if (this._connecting) {
+      return this.once("connect", callback);
     }
-    return this.queryAsync(queryAndData.query, queryAndData.data, callback);
-  },
-  /* dummy function that does query in syncronous mode
-   * has to be provided by database driver.
-   * @private
-   * */
-  querySync: function () {
-    throw new Error('querySync has to be implemented in driver');
-  },
-  /* dummy function that does query in asyncronous mode
-   * has to be provided by database driver.
-   * @private
-   * */
-  queryAsync: function () {
-    throw new Error('queryAsync has to be implemented in driver');
-  },
-  /* dummy function that escapes field, table, database and other names
-   * has to be provided by database driver.
-   * @private
-   * */
-  escapeField: function () {
-    throw new Error('escape Field must be implemented in driver');
-  },
-  /* dummy function that escapes values (text as most common value) 
-   * has to be provided by database driver.
-   * @private
-   * */
-  escapeText: function () {
-    throw new Error('escape text must be implemented in driver');
+    //it's no need to emit "connect" because connection is ready
+    //and that means that queue have to be empty(processed on connect event emitted after connection
+    return callback();
   }
+  this.once("connect", callback);
+  this._driverSpecificConnectAsync(function (error) {
+    this._connected = !Boolean(error);
+    this._connecting = false;
+    this.emit("connect", error);
+  }.bind(this));
+};
+/* get connection in syncronous way
+ * if connection is ready and connected just return, to give chance for query to run
+ * if connection is in connecting state (_getConnectionAsync was called before) return error
+ * if no connection, or it is broken try to reconnect
+ * return {null|QueryResult} returns null if connection is ok, or return something other to inform
+ * about error
+ * */
+DbDriver.prototype._getConnectionSync = function () {
+  var connectionError;
+  if (this._connection && this.connected) {
+    if (this._connecting) {
+      //connection process was initialized before
+      //by _getConnectionAsync. return error as nothing better can be done
+      return "currently connecting";
+    }
+    //go on. connection is ok;
+    return null;
+  }
+  connectionError = this._driverSpecificConnectSync();
+  this._connected = !Boolean(connectionError);
+  //no really need for this, but to prevent possible bugs
+  this._connecting = false;
+};
+/* execure query in apropriate mode
+ * manage connection. connect if not connected
+ * handle errors
+ * @private
+ * @param {String} query query with placeholders
+ * @param {Array<{*}>} data  arguments to query
+ * @param {function|undefined} callback. callback to call in asyncronous mode. if present -- work in asyncronous mode. if absent -- in syncronous
+ * @return {undefined|QueryResult} return QueryResult if working in syncronous mode, or return nothing in syncronous. in asyncronous mode, query result is returned as argument of callback
+ * */
+DbDriver.prototype._query = function (query, data, callback) {
+  var queryAndData = this.prepareQuery(query, data),
+    connectionError,
+    result;
+  if (callback === undefined) {
+    connectionError = this._getConnectionSync();
+    if (connectionError) {
+      result = new QueryResult();
+      result.query = queryAndData.query;
+      result.error = connectionError;
+    } else {
+      result = this.querySync(queryAndData.query, queryAndData.data);
+    }
+    if (this._driverSpecificErrorHandler instanceof Function) {
+      this._driverSpecificErrorHandler(result);
+    }
+    return result;
+  }
+  return this._getConnectionAsync(function (error) {
+    var result;
+    if (error) {
+      result = new QueryResult();
+      result.query = queryAndData.query;
+      result.error = error;
+      this._driverSpecificErrorHandler(result);
+      return callback(result);
+    }
+    this.queryAsync(queryAndData.query, queryAndData.data, function (queryResult) {
+      if (this._driverSpecificErrorHandler instanceof Function) {
+        this._driverSpecificErrorHandler(queryResult);
+      }
+      callback(queryResult);
+    }.bind(this));
+  }.bind(this));
+};
+/* dummy function that does query in syncronous mode
+ * has to be provided by database driver.
+ * @private
+ * */
+DbDriver.prototype.querySync = function () {
+  throw new Error('querySync has to be implemented in driver');
+};
+/* dummy function that does query in asyncronous mode
+ * has to be provided by database driver.
+ * @private
+ * */
+DbDriver.prototype.queryAsync = function () {
+  throw new Error('queryAsync has to be implemented in driver');
+};
+/* dummy function that escapes field, table, database and other names
+ * has to be provided by database driver.
+ * @private
+ * */
+DbDriver.prototype.escapeField = function () {
+  throw new Error('escape Field must be implemented in driver');
+};
+/* dummy function that escapes values (text as most common value)
+ * has to be provided by database driver.
+ * @private
+ * */
+DbDriver.prototype.escapeText = function () {
+  throw new Error('escape text must be implemented in driver');
+};
+/* enable statistic collection for current database
+ * @public
+ * */
+DbDriver.prototype.enableStatistics = function () {
+  if (!this.statistics) {
+    this.statistics = {};
+  }
+};
+/* clean statistics (delete all remembered queries and their execution times and counts)
+ * @public
+ * */
+DbDriver.prototype.clearStatisics = function () {
+  this.statistics = {};
+};
+/* run query
+ * normalize function arguments to three values: query, arguments for query(empty array if no arguments)  and callback (if present)
+ * for convinient usage by deeper level functions
+ * collect runtime statistics(if enabled)
+ * query is executed in asyncronous if last argument is function
+ * @public
+ * @param {String} query
+ * @param {Array|function(QueryResult)|undefined} data. If data is Array -- than use it as query arguments. if function, and is last argument that use as callback to be called after query is done
+ * if undefined, and is last argument -- that run query in syncronous mode, without any arguments
+ * return {QueryResult|undefined} if run in syncronous mode -- return result of query. if run in asyncronous -- return nothing. query result will be returned trough callback
+ * */
+DbDriver.prototype.query = function (query) {
+  var callback,
+    timeStart,
+    originalCallback,
+    tmp,
+    queryData = [];
+  //remove query from arguments
+  if (arguments[arguments.length - 1] instanceof Function) {
+    callback =  Array.prototype.pop.apply(arguments);
+  }
+  Array.prototype.slice.call(arguments, 1).forEach(function (arg) {
+    if (queryData instanceof Array) {
+      queryData = queryData.concat(arg);
+    } else {
+      queryData.push(arg);
+    }
+  });
+  if (this.statistics) {
+    if (this.statistics[query] === undefined) {
+      this.statistics[query] = {count: 0, time: 0};
+    }
+    timeStart = Date.now();
+    if (callback instanceof Function) {
+      originalCallback = callback;
+      callback = function () {
+        this.statistics[query].count++;
+        this.statistics[query].time += Date.now() - timeStart;
+        originalCallback.apply(this, arguments);
+      }.bind(this);
+      return this._backend.query(query, queryData, callback);
+    }
+    tmp = this._query(query, queryData, callback);
+    this.statistics[query].count++;
+    this.statistics[query].time += Date.now() - timeStart;
+    return tmp;
+  }
+  return this._query(query, queryData, callback);
 };
 /* @class  driver for postgresql database
  * @param {String} db database identifier
@@ -128,10 +299,8 @@ DbDriver.prototype = {
 var PostgresDriver = function (db, config) {
   DbDriver.apply(this, arguments);
   //var pg     = require('pg').native;
-  var pg     = require('pg');
+  this.Pg     = require('pg');
   //TODO set defaults for missing parameters;
-  this._connection = new pg.Client(config);
-  this._connection.connect();
 };
 util.inherits(PostgresDriver, DbDriver);
 /* syncronous query dummy function. postgres driver does not provide any posibility to execute syncronous queries
@@ -139,27 +308,68 @@ util.inherits(PostgresDriver, DbDriver);
 PostgresDriver.prototype.querySync = function () {
   throw new Error('Postgres driver does not provide synchronous version of query');
 };
-/* run query in asyncronous mode 
+/* driver specific implementation of DbDriver._driverSpecificConnectSync
+ * pg library does not provide syncronous version of connect, so throw exeption if called
+ * @private
+ * */
+PostgresDriver.prototype._driverSpecificConnectSync = function () {
+  throw new Error('postgres driver does not provide asyncronous version of connect');
+};
+/* driver specific implementation of DbDriver._driverSpecificConnectAsync
+ * handle connection errors
+ * @private
+ * */
+PostgresDriver.prototype._driverSpecificConnectAsync = function (callback) {
+  this._connection = new this.Pg.Client(this.config);
+  this._connection.connect(callback);
+  this._connection.on('error', function (error) {
+    this._connected = false;
+    this.emit("disconnect");
+  }.bind(this));
+};
+/* driver specific implementation of _driverSpecificErrorHandler. 
+ * this method is called every time query returns result. 
+ * it analyzes result and makes decision if connection is alive. 
+ * if connection is not alive, handle this situation
+ * */
+PostgresDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
+  if (queryResult.error) {
+    if (queryResult.error.code === 'ECONNREFUSED') {
+      this._connected = false;
+      this.emit("disconnect");
+    }
+  }
+};
+/* run query in asyncronous mode
  * @private
  * @param {string} query
  * @param {} data  query arguments
- * @param {function(QueryResult)} callback to be called query is done 
+ * @param {function(QueryResult)} callback to be called query is done
  * @return {undefined} returns nothing. result is provided as argument for callback
  * */
 PostgresDriver.prototype.queryAsync = function (query, data, callback) {
-  this._connection.query(query, data, function (err, data) {
-    var answer = new QueryResult();
-    answer.query = query;
-    answer.error = err;
-    if (!answer.error) {
-      answer.rows  = data.rows;
-    }
-    callback(answer);
-  });
+  try {
+    //pg library throws exceptions when calling query 
+    //in some situation, like when database connection fails
+    this._connection.query(query, data, function (err, data) {
+      var answer = new QueryResult();
+      answer.query = query;
+      answer.error = err;
+      if (!answer.error) {
+        answer.rows  = data.rows;
+      }
+      callback(answer);
+    });
+  } catch (e) {
+    var result = new QueryResult();
+    result.query = query;
+    result.error = e;
+    callback(result);
+  }
 };
 /* create object that represents query argument, that will be used as list of coma separated values for sql IN operator
  * @public
- * @param {Array<*>} array array that contains values to be used in sql expression like  IN (val1, val2, val3 , ...) 
+ * @param {Array<*>} array array that contains values to be used in sql expression like  IN (val1, val2, val3 , ...)
  * @return Object
  * */
 PostgresDriver.prototype.inEscape = function (array) {
@@ -191,9 +401,9 @@ PostgresDriver.prototype.noEscape = function (text) {
   };
 };
 /* create object that represents query argument, argument is field name, table name, database name, user name or name of other database part
- * field will be escaped with  " symbol  
+ * field will be escaped with  " symbol
  * @public
- * @param {String} field name to be pasted and escaped in query 
+ * @param {String} field name to be pasted and escaped in query
  * @return Object
  * */
 PostgresDriver.prototype.field = function (field) {
@@ -207,7 +417,7 @@ PostgresDriver.prototype.field = function (field) {
 };
 /* create object that represents query argument, argument is any common value, text numbers, null or undefined
  * @public
- * @param {String|Number|null|undefined} text 
+ * @param {String|Number|null|undefined} text
  * @return Object
  * */
 PostgresDriver.prototype.escapeString = function (text) {
@@ -224,7 +434,7 @@ PostgresDriver.prototype.escapeString = function (text) {
 };
 /* escape identifier (table,database, schema, user name) before placing it in query
  * @_private
- * @param {String} field 
+ * @param {String} field
  * @return Object
  * */
 PostgresDriver.prototype.escapeField = function (field) {
@@ -239,9 +449,9 @@ PostgresDriver.prototype.escapeText = function (text) {
   throw new Error('not implemented');
 };
 /* create query argument that represents row that need to be inserted by INSERT statement
- * f.e. INSERT INTO tbl_name $ 
+ * f.e. INSERT INTO tbl_name $
  * @public
- * @param {Object} row object -- key-value pairs that represents row to be inserted. key is name of field in database, value is value to be inserted 
+ * @param {Object} row object -- key-value pairs that represents row to be inserted. key is name of field in database, value is value to be inserted
  * @return Object
  * */
 PostgresDriver.prototype.insertRow = function (row) {
@@ -261,7 +471,7 @@ PostgresDriver.prototype.insertRow = function (row) {
   return argStorage;
 };
 /* create query argument that represents multiple rows that need to be inserted by INSERT statement
- * f.e. INSERT INTO tbl_name $ 
+ * f.e. INSERT INTO tbl_name $
  * @public
  * @param {Array} rows array, that contains set of rows to be insered. every row  object, that represents one row, like in PostgresDriver.insertRow
  * @return Object
@@ -318,15 +528,25 @@ PostgresDriver.prototype.updateRow = function (row) {
  * */
 var MysqlDriver = function (db, config) {
   DbDriver.apply(this, arguments);
-  var Mysql     = require('mysql-libmysqlclient');
+  this.Mysql = require('mysql-libmysqlclient');
   //TODO set defaults for missing parameters;
   if (this.config.charset === undefined) {
     this.config.charset = 'utf8';
   }
-  this._connection = Mysql.createConnectionSync();
-  this._connection.connectSync(this.config.host, this.config.user, this.config.password, this.config.database);
+};
+util.inherits(MysqlDriver, DbDriver);
+/* mysql driver specific version of _driverSpecificConnectSync
+ * connects to database in syncronous mode.
+ * @private
+ * @return {null| Error} null means that connection is ok. Error represents error, that happens in connection process
+ * */
+MysqlDriver.prototype._driverSpecificConnectSync = function () {
+  this._connection = this.Mysql.createConnectionSync(this.config.host, this.config.user, this.config.password, this.config.database);
+  //connectedSync, even being syncronous, is very fast
+  //because it's only kind of getter for filed in instance of
+  //internal mysql-libmysqlclient class
   if (!this._connection.connectedSync()) {
-    throw new Error(util.inspect({
+    return new Error(util.inspect({
       message: 'can not connect',
       config: this.config,
       errno: this._connection.connectErrno,
@@ -334,9 +554,37 @@ var MysqlDriver = function (db, config) {
     }, true, null, true));
   }
   this._connection.setCharsetSync(this.config.charset);
+  return null;
 };
-util.inherits(MysqlDriver, DbDriver);
-/* run query in syncronous mode 
+/* asyncronous version of _driverSpecificConnectAsync for mysql
+ * as mysql-libmysqlclient does not provide asyncronous version of connect
+ * it is made using syncronous
+ * @private
+ * @param {function({null|Error})} callback to call when connection is ready
+ * @return {undefined}  nothing to return
+ * */
+MysqlDriver.prototype._driverSpecificConnectAsync = function (callback) {
+  //mysql driver has no implementation of asyncronous connect
+  //so asycronous version on the base of syncronous
+  //of course this will block, but connection has not be wery often, and this has not be problem
+  process.nextTick(callback.bind(this, this._driverSpecificConnectSync()));
+};
+/* driver specific implementation of _driverSpecificErrorHandler. 
+ * this method is called every time query returns result. 
+ * it analyzes result and makes decision if connection is alive. 
+ * if connection is not alive, handle this situation
+ * @private
+ * @param {QueryResult} queryResult  intercepted result of query
+ * */
+MysqlDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
+  if (queryResult.error) {
+    if (queryResult.error === 'MySQL server has gone away') {
+      this._connected = false;
+      this.emit("disconnect");
+    }
+  }
+};
+/* run query in syncronous mode
  * @private
  * @param {string} query
  * @param {} data  query arguments
@@ -359,11 +607,11 @@ MysqlDriver.prototype.querySync = function (query, data) {
   }
   return answer;
 };
-/* run query in asyncronous mode 
+/* run query in asyncronous mode
  * @private
  * @param {string} query
  * @param {} data  query arguments
- * @param {function(QueryResult)} callback to be called when query is done 
+ * @param {function(QueryResult)} callback to be called when query is done
  * @return {undefined} returns nothing. result is provided as argument for callback
  * */
 MysqlDriver.prototype.queryAsync = function (query, data, callback) {
@@ -401,7 +649,7 @@ MysqlDriver.prototype.queryAsync = function (query, data, callback) {
 /* escape identifier (table,database, schema, user name) before placing it in query
  * use ` symbol
  * @private
- * @param {String} field 
+ * @param {String} field
  * @return Object
  * */
 MysqlDriver.prototype.escapeField = function (field) {
@@ -415,7 +663,7 @@ MysqlDriver.prototype.escapeField = function (field) {
 /* escape test before placing it in query
  * use ' symbol
  * @private
- * @param {String} field 
+ * @param {String} field
  * @return Object
  * */
 MysqlDriver.prototype.escapeText = function (text) {
@@ -429,7 +677,7 @@ MysqlDriver.prototype.escapeText = function (text) {
 };
 /* create object that represents text argument query
  * @public
- * @param {Strin,g} text 
+ * @param {Strin,g} text
  * @return Object
  * */
 MysqlDriver.prototype.escapeString = function (text) {
@@ -441,9 +689,9 @@ MysqlDriver.prototype.escapeString = function (text) {
   return argStorage;
 };
 /* create object that represents query argument, argument is field name, table name, database name, user name or name of other database part
- * field will be escaped with  ` symbol  
+ * field will be escaped with  ` symbol
  * @public
- * @param {String} field name to be pasted and escaped in query 
+ * @param {String} field name to be pasted and escaped in query
  * @return Object
  * */
 MysqlDriver.prototype.field = function (field) {
@@ -456,7 +704,7 @@ MysqlDriver.prototype.field = function (field) {
 };
 /* create object that represents query argument, that will be used as list of coma separated values for sql IN operator
  * @public
- * @param {Array<*>} array array that contains values to be used in sql expression like  IN (val1, val2, val3 , ...) 
+ * @param {Array<*>} array array that contains values to be used in sql expression like  IN (val1, val2, val3 , ...)
  * @return Object
  * */
 MysqlDriver.prototype.inEscape = function (array) {
@@ -470,9 +718,9 @@ MysqlDriver.prototype.inEscape = function (array) {
   return argStorage;
 };
 /* create query argument that represents row that need to be inserted by INSERT statement
- * f.e. INSERT INTO tbl_name $ 
+ * f.e. INSERT INTO tbl_name $
  * @public
- * @param {Object} row object -- key-value pairs that represents row to be inserted. key is name of field in database, value is value to be inserted 
+ * @param {Object} row object -- key-value pairs that represents row to be inserted. key is name of field in database, value is value to be inserted
  * @return Object
  * */
 MysqlDriver.prototype.insertRow = function (row) {
@@ -491,7 +739,7 @@ MysqlDriver.prototype.insertRow = function (row) {
   return argStorage;
 };
 /* create query argument that represents multiple rows that need to be inserted by INSERT statement
- * f.e. INSERT INTO tbl_name $ 
+ * f.e. INSERT INTO tbl_name $
  * @public
  * @param {Array} rows array, that contains set of rows to be insered. every row  object, that represents one row, like in MysqlDriver.insertRow
  * @return Object
@@ -541,7 +789,7 @@ MysqlDriver.prototype.updateRow = function (row) {
 };
 /* class that represents one database
  * @constructor
- * @param {String} dbName identifier of database 
+ * @param {String} dbName identifier of database
  * @param {Object} dbConfiguration object that contains configuration for connection to database
  * */
 var Db = function (dbName, dbConfiguration) {
@@ -561,114 +809,6 @@ var Db = function (dbName, dbConfiguration) {
   this._backend = new backendDriver(this, dbConfiguration);
   this.statistics = false;
 };
-Db.prototype = {
-  /* run query using apropriate database driver
-   * query is executed in asyncronous if last argument is function
-   * @public
-   * @param {String} query 
-   * @param {Array|function(QueryResult)|undefined} data. If data is Array -- than use it as query arguments. if function, and is last argument that use as callback to be called after query is done
-   * if undefined, and is last argument -- that run query in syncronous mode, without any arguments
-   * return {QueryResult|undefined} if run in syncronous mode -- return result of query. if run in asyncronous -- return nothing. query result will be returned trough callback
-   * */
-  query: function (query) {
-    var callback,
-      timeStart,
-      originalCallback,
-      tmp,
-      queryData = [];
-    //remove query from arguments
-    if (arguments[arguments.length - 1] instanceof Function) {
-      callback =  Array.prototype.pop.apply(arguments);
-    }
-    Array.prototype.slice.call(arguments, 1).forEach(function (arg) {
-      if (queryData instanceof Array) {
-        queryData = queryData.concat(arg);
-      } else {
-        queryData.push(arg);
-      }
-    });
-    if (this.statistics) {
-      if (this.statistics[query] === undefined) {
-        this.statistics[query] = {count: 0, time: 0};
-      }
-      timeStart = Date.now();
-      if (callback instanceof Function) {
-        originalCallback = callback;
-        callback = function () {
-          this.statistics[query].count++;
-          this.statistics[query].time += Date.now() - timeStart;
-          originalCallback.apply(this, arguments);
-        }.bind(this);
-        return this._backend.query(query, queryData, callback);
-      }
-      tmp = this._backend.query(query, queryData, callback);
-      this.statistics[query].count++;
-      this.statistics[query].time += Date.now() - timeStart;
-      return tmp;
-    }
-    return this._backend.query(query, queryData, callback);
-  },
-  /* enable statistic collection for current database 
-   * @public
-   * */
-  enableStatistics: function () {
-    if (!this.statistics) {
-      this.statistics = {};
-    }
-  },
-  /* clean statistics (delete all remembered queries and their execution times and counts)
-   * @public
-   * */
-  clearStatisics: function () {
-    this.statistics = {};
-  },
-  /* create object that represents row to be inserted by INSERT sql statement using apropriate database driver
-   * @public
-   * */
-  insertRow: function (row) {
-    //row is key/value object
-    return this._backend.insertRow(row);
-  },
-  /* create object that represents multiple rows to be inserted by INSERT sql statement using apropriate database driver
-   * @public
-   * */
-  insertMultiRow: function (row) {
-    //row is key/value object
-    return this._backend.insertMultiRow(row);
-  },
-  /* create object that represents row values  to be stored in database by UPDATE sql statement using apropriate database driver
-   * @public
-   * */
-  updateRow: function (row) {
-    //row is key/value object
-    return this._backend.updateRow(row);
-  },
-  /* create object that represents identifier for some database object(table, schema, database)  using apropriate database driver
-   * @public
-   * */
-  field: function (field) {
-    return this._backend.field(field);
-  },
-  /* create object that represents query argument, that has not be escaped in any way
-   * dangerous. use if you are really know what you are doing
-   * @public
-   * */
-  noEscape: function (text) {
-    return this._backend.noEscape(text);
-  },
-  /* create object that represents values for sql IN statement using apropriate database driver 
-   * @public
-   * */
-  inEscape: function (array) {
-    return this._backend.inEscape(array);
-  },
-  /* create object that represents normal text, that has to be placed in query. escaping is done by apropriate database driver 
-   * @public
-   * */
-  escapeString: function (text) {
-    return this._backend.escapeString(text);
-  }
-};
 /* database conection manager class
  * @constructor
  * @return {function(String)} returns function, that is interface to connection manager(lookup method from DbInstanceManager.prototype)
@@ -682,17 +822,30 @@ var DbInstanceManager = function () {
 DbInstanceManager.prototype = {
   /* interface, that is exported by DbInstanceManager to outer world
    * @public
-   * @param {String} dbName identifier of database. 
+   * @param {String} dbName identifier of database.
    * @return {Db} returns instance of class Db, that is connected to database identified with dbName. If connection already opened -- return it. if no connection -- try to  connect, and return if successfull
    */
   lookup: function (dbName) {
+    var backendDriver;
     if (this.databaseInstances[dbName] !== undefined) {
       return this.databaseInstances[dbName];
     }
     if (this.databases[dbName] === undefined) {
       throw new Error('There are no ' + dbName + ' database in configuration');
     }
-    this.databaseInstances[dbName] = new Db(dbName, this.databases[dbName]);
+    switch (this.databases[dbName].driver) {
+    case undefined:
+      throw new Error('Driver for ' + dbName + ' is not defined');
+    case 'postgres':
+      backendDriver = PostgresDriver;
+      break;
+    case 'mysql':
+      backendDriver = MysqlDriver;
+      break;
+    default:
+      throw new Error('Driver ' + this.databases[dbName].driver + ' for database ' + dbName + ' is not implemented');
+    }
+    this.databaseInstances[dbName] = new backendDriver(dbName, this.databases[dbName]);
     return this.databaseInstances[dbName];
   }
 };
