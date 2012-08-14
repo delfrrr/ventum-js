@@ -32,7 +32,7 @@ exports.cls = function (Lib) {
     start: function (port, ip) {
       port = port || this.PORT;
       ip = ip || this.IP;
-      this._server.listen(port, ip); 
+      this._server.listen(port, ip);
       Console.log('http server started at %d port', port);
     },
     /**

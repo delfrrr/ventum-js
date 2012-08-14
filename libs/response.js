@@ -23,7 +23,7 @@ exports.cls = function () {
       }.bind(this), time);
     },
     _setContentTypeHeader: function (contentType, charset) {
-      if(charset === undefined) {
+      if (charset === undefined) {
         charset = this.DEFAULT_CHARSET;
       }
       if (charset) {
@@ -104,8 +104,8 @@ exports.cls = function () {
         } else {
           ret = String(data);
         }
-        this._end(ret); 
-      } else  {
+        this._end(ret);
+      } else {
         this._end();
       }
     },

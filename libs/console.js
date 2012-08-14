@@ -90,7 +90,7 @@ exports.instance = function (Lib) {
      * @param {Number} [stackCount] count of stacks in error message
      */
     error: function (message, stackCount) {
-      var message = this._message(message, typeof stackCount === 'number' ? stackCount : this.MAX_STACK);
+      message = this._message(message, typeof stackCount === 'number' ? stackCount : this.MAX_STACK);
       console.error(message);
     },
     /**
