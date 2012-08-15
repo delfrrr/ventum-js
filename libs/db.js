@@ -120,12 +120,12 @@ DbDriver.prototype._driverSpecificConnectSync = function () {
  * */
 DbDriver.prototype._getConnectionAsync = function (callback) {
   if (this._connection && this._connected) {
-    if (this._connecting) {
-      return this.once("connect", callback);
-    }
     //it's no need to emit "connect" because connection is ready
     //and that means that queue have to be empty(processed on connect event emitted after connection
     return callback();
+  }
+  if (this._connecting) {
+    return this.once("connect", callback);
   }
   this.once("connect", callback);
   this._driverSpecificConnectAsync(function (error) {
@@ -143,19 +143,20 @@ DbDriver.prototype._getConnectionAsync = function (callback) {
  * */
 DbDriver.prototype._getConnectionSync = function () {
   var connectionError;
-  if (this._connection && this.connected) {
-    if (this._connecting) {
-      //connection process was initialized before
-      //by _getConnectionAsync. return error as nothing better can be done
-      return "currently connecting";
-    }
+  if (this._connection && this._connected) {
     //go on. connection is ok;
     return null;
+  }
+  if (this._connecting) {
+    //connection process was initialized before
+    //by _getConnectionAsync. return error as nothing better can be done
+    return "currently connecting";
   }
   connectionError = this._driverSpecificConnectSync();
   this._connected = !Boolean(connectionError);
   //no really need for this, but to prevent possible bugs
   this._connecting = false;
+  return connectionError;
 };
 /* execure query in apropriate mode
  * manage connection. connect if not connected
@@ -283,7 +284,7 @@ DbDriver.prototype.query = function (query) {
         this.statistics[query].time += Date.now() - timeStart;
         originalCallback.apply(this, arguments);
       }.bind(this);
-      return this._backend.query(query, queryData, callback);
+      return this._query(query, queryData, callback);
     }
     tmp = this._query(query, queryData, callback);
     this.statistics[query].count++;
