@@ -86,7 +86,7 @@ DbDriver.prototype.prepareQuery = function (query, data) {
       //undefined.prepareForQuery === undefined produces.exception
       //additional checks to avod it
       if (data[placeholderNum] === null || data[placeholderNum] === undefined || !(data[placeholderNum].prepareForQuery instanceof Function)) {
-        data[placeholderNum] = this.escapeString(data[placeholderNum]);
+        data[placeholderNum] = this.escapeDefault(data[placeholderNum]);
       }
       return data[placeholderNum].prepareForQuery(preparedData, placeholderNum, data, context, arguments);
     }.bind(this));
@@ -220,14 +220,14 @@ DbDriver.prototype.queryAsync = function () {
  * has to be provided by database driver.
  * @private
  * */
-DbDriver.prototype.escapeField = function () {
+DbDriver.prototype._escapeField = function () {
   throw new Error('escape Field must be implemented in driver');
 };
 /* dummy function that escapes values (text as most common value)
  * has to be provided by database driver.
  * @private
  * */
-DbDriver.prototype.escapeText = function () {
+DbDriver.prototype._escapeText = function () {
   throw new Error('escape text must be implemented in driver');
 };
 /* enable statistic collection for current database
@@ -412,7 +412,7 @@ PostgresDriver.prototype.field = function (field) {
   return {
     data: field,
     prepareForQuery: function () {
-      return self.escapeField(this.data);
+      return self._escapeField(this.data);
     }
   };
 };
@@ -433,12 +433,16 @@ PostgresDriver.prototype.escapeString = function (text) {
   };
   return argStorage;
 };
+/* default escape method, for arguments, that with type not expressed explicitly
+ * @param {*} 
+ * */
+PostgresDriver.prototype.escapeDefault = PostgresDriver.prototype.escapeString;
 /* escape identifier (table,database, schema, user name) before placing it in query
- * @_private
+ * @private
  * @param {String} field
  * @return Object
  * */
-PostgresDriver.prototype.escapeField = function (field) {
+PostgresDriver.prototype._escapeField = function (field) {
   return '"' + field.replace(/(\\)*"/g, function (fullMatch, escapeSeqMatch) {
     if (escapeSeqMatch === undefined) {
       return '\\"';
@@ -446,7 +450,7 @@ PostgresDriver.prototype.escapeField = function (field) {
     return escapeSeqMatch + (escapeSeqMatch.length % 2 === 0 ? '\\' : '') + '"';
   }) + '"';
 };
-PostgresDriver.prototype.escapeText = function (text) {
+PostgresDriver.prototype._escapeText = function (text) {
   throw new Error('not implemented');
 };
 /* create query argument that represents row that need to be inserted by INSERT statement
@@ -462,7 +466,7 @@ PostgresDriver.prototype.insertRow = function (row) {
     var key,
       placeholders = [],
       keys = Object.keys(row).map(function (field) {
-        return self.escapeField(field);
+        return self._escapeField(field);
       });
     for (key in row) {
       placeholders.push('$' + preparedData.push(row[key]));
@@ -488,7 +492,7 @@ PostgresDriver.prototype.insertMultiRow = function (rows) {
       names = [],
       values;
     for (key in this.data[0]) {
-      names.push(self.escapeField(key));
+      names.push(self._escapeField(key));
     }
     //jslint does not understand for (i=10; i--;)
     for (i = this.data.length; i--; i) {
@@ -516,7 +520,7 @@ PostgresDriver.prototype.updateRow = function (row) {
     var key,
       answer = [];
     for (key in row) {
-      answer.push(self.escapeField(key) + '=$' + preparedData.push(row[key]));
+      answer.push(self._escapeField(key) + '=$' + preparedData.push(row[key]));
     }
     return answer.join(', ');
   };
@@ -647,13 +651,21 @@ MysqlDriver.prototype.queryAsync = function (query, data, callback) {
       }
     });
 };
+/* escape argument as text with ' symbol. private helper method
+ * @private
+ * @param {String} text to escape
+ * @return {String} escaped string
+ * */
+MysqlDriver.prototype._escapeText = function (text) {
+  return '\'' + this._connection.escapeSync(String(text)) + '\'';
+}
 /* escape identifier (table,database, schema, user name) before placing it in query
  * use ` symbol
  * @private
  * @param {String} field
  * @return Object
  * */
-MysqlDriver.prototype.escapeField = function (field) {
+MysqlDriver.prototype._escapeField = function (field) {
   return '`' + field.replace(/`+/g, function (matches) {
     if (matches.length % 2 === 0) {
       return matches;
@@ -661,20 +673,35 @@ MysqlDriver.prototype.escapeField = function (field) {
     return matches + '`';
   }) + '`';
 };
-/* escape test before placing it in query
- * use ' symbol
+/* smart escape data depenging on data type
  * @private
- * @param {String} field
- * @return Object
+ * @param {*} data data to be escaped
  * */
-MysqlDriver.prototype.escapeText = function (text) {
-  if (text === null || text === undefined) {
+MysqlDriver.prototype._escapeSmart = function (data) {
+  if (data === null || data === undefined) {
     return 'NULL';
   }
-  if (typeof (text) === 'boolean') {
-    return text;
+  if (typeof (data) === 'boolean') {
+    return data;
   }
-  return '\'' + this._connection.escapeSync(String(text)) + '\'';
+  if (typeof (data) === 'number') {
+    return  data; 
+  }
+  return '\'' + this._connection.escapeSync(String(data)) + '\'';
+};
+/* default method for escaping query arguments, without explicitly defined type
+ * use _escapeSmart method to be convinient enough
+ * @public
+ * @param {String} text
+ * @return Object
+ * */
+MysqlDriver.prototype.escapeDefault = function (text) {
+  var self = this,
+    argStorage = {data: text};
+  argStorage.prepareForQuery = function () {
+    return self._escapeSmart(this.data);
+  }
+  return argStorage;
 };
 /* create object that represents text argument query
  * @public
@@ -685,7 +712,7 @@ MysqlDriver.prototype.escapeString = function (text) {
   var self = this,
     argStorage = {data: text};
   argStorage.prepareForQuery = function () {
-    return self.escapeText(this.data);
+    return self._escapeText(this.data);
   };
   return argStorage;
 };
@@ -699,7 +726,7 @@ MysqlDriver.prototype.field = function (field) {
   var self = this,
     argStorage = {data: field};
   argStorage.prepareForQuery = function () {
-    return self.escapeField(this.data);
+    return self._escapeField(this.data);
   };
   return argStorage;
 };
@@ -713,7 +740,7 @@ MysqlDriver.prototype.inEscape = function (array) {
     argStorage = {data: array};
   argStorage.prepareForQuery = function () {
     return this.data.map(function (item) {
-      return self.escapeText(item);
+      return self._escapeSmart(item);
     }).join(',');
   };
   return argStorage;
@@ -732,8 +759,8 @@ MysqlDriver.prototype.insertRow = function (row) {
       values = [],
       key;
     for (key in this.data) {
-      values.push(self.escapeText(this.data[key]));
-      names.push(self.escapeField(key));
+      values.push(self._escapeSmart(this.data[key]));
+      names.push(self._escapeField(key));
     }
     return '(' + names.join(',') + ') VALUES(' + values.join(',') + ')';
   };
@@ -755,13 +782,13 @@ MysqlDriver.prototype.insertMultiRow = function (rows) {
       values,
       rows = [];
     for (key in this.data[0]) {
-      names.push(self.escapeField(key));
+      names.push(self._escapeField(key));
     }
     //jslint does not understand for (i=10; i--;)
     for (i = this.data.length; i--; i) {
       values = [];
       for (key in this.data[i]) {
-        values.push(self.escapeText(this.data[i][key]));
+        values.push(self._escapeSmart(this.data[i][key]));
       }
       rows.push('(' + values.join(',') + ')');
     }
@@ -782,7 +809,7 @@ MysqlDriver.prototype.updateRow = function (row) {
     var keyValuePairs = [],
       key;
     for (key in this.data) {
-      keyValuePairs.push(self.escapeField(key) + '=' + self.escapeText(this.data[key]));
+      keyValuePairs.push(self._escapeField(key) + '=' + self._escapeSmart(this.data[key]));
     }
     return keyValuePairs.join(', ');
   };
