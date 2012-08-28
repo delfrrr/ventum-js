@@ -546,7 +546,7 @@ util.inherits(MysqlDriver, DbDriver);
  * @return {null| Error} null means that connection is ok. Error represents error, that happens in connection process
  * */
 MysqlDriver.prototype._driverSpecificConnectSync = function () {
-  this._connection = this.Mysql.createConnectionSync(this.config.host, this.config.user, this.config.password, this.config.database);
+  this._connection = this.Mysql.createConnectionSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
   //connectedSync, even being syncronous, is very fast
   //because it's only kind of getter for filed in instance of
   //internal mysql-libmysqlclient class
