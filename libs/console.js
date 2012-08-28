@@ -18,6 +18,18 @@ exports.instance = function (Lib) {
   Console.prototype = {
     FORMAT : 'D M d H:i:s Y',
     MAX_STACK : 3,
+    types: {
+      error: {
+        path: '/dev/null',
+        format: 'error'
+      },
+      log: {
+        path: '/dev/null',
+        format: 'log'
+      }
+    },
+    defaultType: 'error',
+    defaultFormat: 'error',
     _initDateArrays: function () {
       var self = this;
       self._dateArrays = {
