@@ -7,7 +7,7 @@
 var Fs = require('fs');
 var util = require('util');
 var Lib = require('ventum');
-var Helpers = Lib('helpers');
+var Helpers;
 exports.instance = function (Lib) {
   var util = require('util'),
     Console;
@@ -155,6 +155,10 @@ exports.instance = function (Lib) {
       },
       csv: function (array) {
         if (array instanceof Array) {
+          //this is not the best way to break  load-time 
+          //circular dependency between helpers and console
+          //libraries
+          Helpers  = Helpers ||  Lib('helpers');
           return Helpers.toCSV(array) + '\n';
         }
         return this._formatters[this.defaultFormat].apply(this, arguments);
