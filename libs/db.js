@@ -45,7 +45,7 @@ var DbDriver = function (db, config) {
   this.db = db;
   this.config = config;
   this._connection = false;
-  /* flag. means that now connection in connecting state 
+  /* flag. means that now connection in connecting state
    * @type {Boolean}
    * @private
    * */
@@ -328,9 +328,9 @@ PostgresDriver.prototype._driverSpecificConnectAsync = function (callback) {
     this.emit("disconnect");
   }.bind(this));
 };
-/* driver specific implementation of _driverSpecificErrorHandler. 
- * this method is called every time query returns result. 
- * it analyzes result and makes decision if connection is alive. 
+/* driver specific implementation of _driverSpecificErrorHandler.
+ * this method is called every time query returns result.
+ * it analyzes result and makes decision if connection is alive.
  * if connection is not alive, handle this situation
  * */
 PostgresDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
@@ -350,7 +350,7 @@ PostgresDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
  * */
 PostgresDriver.prototype.queryAsync = function (query, data, callback) {
   try {
-    //pg library throws exceptions when calling query 
+    //pg library throws exceptions when calling query
     //in some situation, like when database connection fails
     this._connection.query(query, data, function (err, data) {
       var answer = new QueryResult();
@@ -434,7 +434,7 @@ PostgresDriver.prototype.escapeString = function (text) {
   return argStorage;
 };
 /* default escape method, for arguments, that with type not expressed explicitly
- * @param {*} 
+ * @param {*}
  * */
 PostgresDriver.prototype.escapeDefault = PostgresDriver.prototype.escapeString;
 /* escape identifier (table,database, schema, user name) before placing it in query
@@ -546,7 +546,13 @@ util.inherits(MysqlDriver, DbDriver);
  * @return {null| Error} null means that connection is ok. Error represents error, that happens in connection process
  * */
 MysqlDriver.prototype._driverSpecificConnectSync = function () {
-  this._connection = this.Mysql.createConnectionSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
+  //use this strange way of connecting
+  //due to https://github.com/Sannis/node-mysql-libmysqlclient/issues/156 issue
+  this._connection = new this.Mysql.bindings.MysqlConnection();
+  this._connection.initSync();
+  this._connection.setOptionSync(this.Mysql.MYSQL_OPT_LOCAL_INFILE);
+  this._connection.realConnectSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
+  //this._connection = this.Mysql.createConnectionSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
   //connectedSync, even being syncronous, is very fast
   //because it's only kind of getter for filed in instance of
   //internal mysql-libmysqlclient class
@@ -574,9 +580,9 @@ MysqlDriver.prototype._driverSpecificConnectAsync = function (callback) {
   //of course this will block, but connection has not be wery often, and this has not be problem
   process.nextTick(callback.bind(this, this._driverSpecificConnectSync()));
 };
-/* driver specific implementation of _driverSpecificErrorHandler. 
- * this method is called every time query returns result. 
- * it analyzes result and makes decision if connection is alive. 
+/* driver specific implementation of _driverSpecificErrorHandler.
+ * this method is called every time query returns result.
+ * it analyzes result and makes decision if connection is alive.
  * if connection is not alive, handle this situation
  * @private
  * @param {QueryResult} queryResult  intercepted result of query
@@ -596,7 +602,8 @@ MysqlDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
  * @return {QueryResult}
  * */
 MysqlDriver.prototype.querySync = function (query, data) {
-  var res = this._connection.querySync(query),
+  var res = this._connection.querySync(query,
+      (data.length && data[data.length - 1]) || undefined),
     answer = new QueryResult();
   answer.query = query;
   if (!res) {
@@ -621,7 +628,8 @@ MysqlDriver.prototype.querySync = function (query, data) {
  * */
 MysqlDriver.prototype.queryAsync = function (query, data, callback) {
   var self = this,
-    res = this._connection.query(query, function (err, res) {
+    callArguments = [query],
+    internalCallback = function (err, res) {
       var answer = new QueryResult();
       answer.query = query;
       if (!res) {
@@ -649,7 +657,12 @@ MysqlDriver.prototype.queryAsync = function (query, data, callback) {
           });
         });
       }
-    });
+    };
+  if (data.length) {
+    callArguments.push(data.pop());
+  }
+  callArguments.push(internalCallback);
+  this._connection.query.apply(this._connection, callArguments);
 };
 /* escape argument as text with ' symbol. private helper method
  * @private
@@ -658,7 +671,7 @@ MysqlDriver.prototype.queryAsync = function (query, data, callback) {
  * */
 MysqlDriver.prototype._escapeText = function (text) {
   return '\'' + this._connection.escapeSync(String(text)) + '\'';
-}
+};
 /* escape identifier (table,database, schema, user name) before placing it in query
  * use ` symbol
  * @private
@@ -685,7 +698,7 @@ MysqlDriver.prototype._escapeSmart = function (data) {
     return data;
   }
   if (typeof (data) === 'number') {
-    return  data; 
+    return data;
   }
   return '\'' + this._connection.escapeSync(String(data)) + '\'';
 };
@@ -700,7 +713,7 @@ MysqlDriver.prototype.escapeDefault = function (text) {
     argStorage = {data: text};
   argStorage.prepareForQuery = function () {
     return self._escapeSmart(this.data);
-  }
+  };
   return argStorage;
 };
 /* create object that represents text argument query
@@ -812,6 +825,21 @@ MysqlDriver.prototype.updateRow = function (row) {
       keyValuePairs.push(self._escapeField(key) + '=' + self._escapeSmart(this.data[key]));
     }
     return keyValuePairs.join(', ');
+  };
+  return argStorage;
+};
+/* pass Buffer instance to query.(used in LOAD DATA LOCAL INFILE queries)
+ * @public
+ * @params {Buffer} buf instance of Buffer, that has to be passed as query argument
+ * @return {Object} that represents Buffer, as query argument
+ * */
+MysqlDriver.prototype.loadDataBuffer = function (buf) {
+  var argStorage = {data: buf};
+  argStorage.prepareForQuery = function (preparedData) {
+    preparedData.push(this.data);
+    //that's some sensless word,
+    //used only to make mysql happy with query syntax
+    return "'nothing'";
   };
   return argStorage;
 };
