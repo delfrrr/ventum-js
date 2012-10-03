@@ -168,16 +168,17 @@ DbDriver.prototype._getConnectionSync = function () {
  * @return {undefined|QueryResult} return QueryResult if working in syncronous mode, or return nothing in syncronous. in asyncronous mode, query result is returned as argument of callback
  * */
 DbDriver.prototype._query = function (query, data, callback) {
-  var queryAndData = this.prepareQuery(query, data),
+  var queryAndData,
     connectionError,
     result;
   if (callback === undefined) {
     connectionError = this._getConnectionSync();
     if (connectionError) {
       result = new QueryResult();
-      result.query = queryAndData.query;
+      result.query = query;
       result.error = connectionError;
     } else {
+      queryAndData = this.prepareQuery(query, data),
       result = this.querySync(queryAndData.query, queryAndData.data);
     }
     if (this._driverSpecificErrorHandler instanceof Function) {
@@ -189,11 +190,12 @@ DbDriver.prototype._query = function (query, data, callback) {
     var result;
     if (error) {
       result = new QueryResult();
-      result.query = queryAndData.query;
+      result.query = query;
       result.error = error;
       this._driverSpecificErrorHandler(result);
       return callback(result);
     }
+    queryAndData = this.prepareQuery(query, data),
     this.queryAsync(queryAndData.query, queryAndData.data, function (queryResult) {
       if (this._driverSpecificErrorHandler instanceof Function) {
         this._driverSpecificErrorHandler(queryResult);
@@ -873,6 +875,7 @@ var DbInstanceManager = function () {
   this.databaseInstances = {};
   var lookup = this.lookup.bind(this);
   lookup.databases = this.databases;
+  lookup.addConfig = this.addConfig.bind(this);
   return lookup;
 };
 DbInstanceManager.prototype = {
@@ -903,6 +906,12 @@ DbInstanceManager.prototype = {
     }
     this.databaseInstances[dbName] = new backendDriver(dbName, this.databases[dbName]);
     return this.databaseInstances[dbName];
+  },
+  addConfig: function (identifier, config) {
+    if (this.databases[identifier] !== undefined) {
+      throw new Error("database config for" + identifier + " already exists");
+    }
+    this.databases[identifier] = config;
   }
 };
 module.exports.instance = function (Lib) {
