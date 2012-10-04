@@ -874,6 +874,7 @@ var Db = function (dbName, dbConfiguration) {
 var DbInstanceManager = function () {
   this.databaseInstances = {};
   var lookup = this.lookup.bind(this);
+  this.databases = this.databases || {};
   lookup.databases = this.databases;
   lookup.addConfig = this.addConfig.bind(this);
   return lookup;
