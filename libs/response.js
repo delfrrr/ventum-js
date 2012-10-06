@@ -4,7 +4,8 @@
  * @contstructor
  * @param {Object} res Default http response
  */
-exports.cls = function () {
+exports.cls = function (Lib) {
+  var Console = Lib('console');
   var Response = function (res) {
     this._headers = {'Content-Type': 'text/html'};
     this._status = 200;
@@ -39,6 +40,13 @@ exports.cls = function () {
       }[status];
     },
     _end: function (data) {
+      if (this._isEnd) {
+        //most likely that this was called after timeout has passed 
+        //and 504 error was sent to user
+        //do not do anything as call to writeHead will throw exception
+        Console.log("call response.end after response was already finished");
+        return; 
+      }
       this.res.writeHead(this._status, this._headers);
       this.res.end(data);
       this._isEnd = true;
