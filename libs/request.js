@@ -15,7 +15,9 @@ exports.cls = function () {
     for (key in parse) {
       this[key] = parse[key];
     }
-    this.pathname = decodeURIComponent(this.pathname);
+    try {
+      this.pathname = decodeURIComponent(this.pathname);
+    } catch (e) {};
   };
   return Request;
 };

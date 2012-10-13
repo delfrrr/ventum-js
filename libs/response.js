@@ -1,11 +1,23 @@
-/**
- * Will create some wrapper on default http response
- *
- * @contstructor
- * @param {Object} res Default http response
- */
-exports.cls = function (Lib) {
-  var Console = Lib('console');
+var fs = require('fs');
+
+function loadError (pathes, name) {
+    if (!loadError._cache) {
+        loadError._cache = {};
+    }
+    if (loadError._cache[name]) {
+        return loadError._cache[name];
+    }
+    if (pathes[name]) {
+        return (loadError._cache[name] = fs.readFileSync(pathes[name])); 
+    }
+    return name;
+}
+
+exports.cls = function () {
+   /**
+   * @contstructor
+   * @param {Object} res Default http response
+   */
   var Response = function (res) {
     this._headers = {'Content-Type': 'text/html'};
     this._status = 200;
@@ -18,6 +30,7 @@ exports.cls = function (Lib) {
     DEFAULT_TIMEOUT: 5000,
     MAX_TIMEOUT: 30000,
     DEFAULT_CHARSET: 'UTF-8',
+    ERROR_PAGES: [],
     _setTimeout: function (time) {
       this._timeout = setTimeout(function () {
         this.error(504);
@@ -33,11 +46,7 @@ exports.cls = function (Lib) {
       this.headers({'Content-Type': contentType});
     },
     _getErrorPage: function (status) {
-      return {
-        403: 'Forbiden',
-        404: 'Page not found',
-        504: 'Service time-out'
-      }[status];
+      return loadError(this.ERROR_PAGES, status);
     },
     _end: function (data) {
       if (this._isEnd) {
