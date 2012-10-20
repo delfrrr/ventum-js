@@ -101,9 +101,35 @@ LibClass.prototype = {
     });
     return result;
   },
-  _merge: function (first, second) {
+  /* when merging handle parent classes of current. that's implemented
+   * only for classes  inherited with util.inherit (util inherit produces super_
+   * property, and it is used to understand if there are parents, and to get parent's
+   * prototype)
+   * */
+  _mergeSuper: function (dstPrototype, source) {
+    if (source instanceof Function && source.super_ instanceof Function) {
+      this._mergeSuper(dstPrototype, source.super_);
+      Object.getOwnPropertyNames(source.super_.prototype).forEach(function (key) {
+        dstPrototype[key] = source.super_.prototype[key];
+      });
+    }
+  },
+  _mergeSecond: function (dstPrototype, first, second) {
     var diff = second.prototype || second,
-      constructor,
+      key;
+    if (second instanceof Function) {
+      this._mergeSuper(dstPrototype, second);
+    }
+    for (key in diff) {
+      if (diff[key] instanceof Function) {
+        dstPrototype[key] = this._extendProtoMethod(first, diff, key);
+        continue;
+      }
+      dstPrototype[key] = this._mergeJSON(dstPrototype[key], diff[key]);
+    }
+  },
+  _merge: function (first, second) {
+    var constructor,
       key;
     if (second instanceof Function) {
       constructor = function () {
@@ -120,13 +146,7 @@ LibClass.prototype = {
     for (key in first.prototype) {
       constructor.prototype[key] = first.prototype[key];
     }
-    for (key in diff) {
-      if (diff[key] instanceof Function) {
-        constructor.prototype[key] = this._extendProtoMethod(first, diff, key);
-        continue;
-      }
-      constructor.prototype[key] = this._mergeJSON(constructor.prototype[key], diff[key]);
-    }
+    this._mergeSecond(constructor.prototype, first, second);
     return constructor;
   },
   _include: function (name, mods) {
@@ -170,7 +190,7 @@ LibClass.prototype = {
    * Geting instance or class of lib if it exist.
    * If it not, it will be created
    * creating was successfull, lib will stored.
-   * If lib defined with module.exports.instance 
+   * If lib defined with module.exports.instance
    * it will be stored as singletone.
    * If lib defined with modele.exports.cls
    * it will be stored as class.
