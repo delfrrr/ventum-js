@@ -1,5 +1,6 @@
 var fs = require('fs');
-
+var Lib = require('./../');
+var Console = Lib('console');
 function loadError (pathes, name) {
     if (!loadError._cache) {
         loadError._cache = {};
