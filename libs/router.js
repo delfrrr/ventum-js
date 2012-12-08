@@ -6,6 +6,7 @@ exports.instance = function (Lib) {
   var Router = function () {
     this._routes = [];
     this._prepareRoutes();
+    this._sessionManager = Lib('session_manager');
   };
   Router.prototype = {
     _prepareRoutes: function (routes) {
@@ -65,6 +66,7 @@ exports.instance = function (Lib) {
       }
       params.request = request;
       params.response = response;
+      this._sessionManager.onRequest(params);
       route = params.routeObj;
       if (route.model && route.action) {
         this._modelAndAction(params, response);
