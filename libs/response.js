@@ -32,6 +32,8 @@ exports.cls = function () {
     MAX_TIMEOUT: 30000,
     DEFAULT_CHARSET: 'UTF-8',
     ERROR_PAGES: [],
+    DEFAULT_REDIRECT_STATUS: 301,
+    DEFAULT_HTTP_STATUS: 200,
     _setTimeout: function (time) {
       this._timeout = setTimeout(function () {
         this.error(504);
@@ -57,6 +59,7 @@ exports.cls = function () {
         Console.log("call response.end after response was already finished");
         return; 
       }
+      this._status = this._status || this.DEFAULT_HTTP_STATUS;
       this.res.writeHead(this._status, this._headers);
       this.res.end(data);
       this._isEnd = true;
@@ -158,6 +161,20 @@ exports.cls = function () {
     write: function (st) {
       this.res.write(st, 'UTF-8');
       return this;
+    },
+    /* do redirect
+     * @public
+     * @param {string} url  url to redirect client to
+     * @param {Number|String|undefined} httpStatus. status to use 
+     * when redirecting. if not set DEFAULT_REDIRECT_STATUS is used (301)
+     * */
+    redirect: function (url, httpStatus) {
+      if (httpStatus === undefined) {
+        httpStatus = this.DEFAULT_REDIRECT_STATUS;  
+      } 
+      this.headers({'Location': url});
+      this.status(httpStatus);
+      this.end();
     }
   };
   return Response;
