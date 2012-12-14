@@ -38,6 +38,9 @@ CSVFileLogger.prototype = {
       }
     }
     return dataArray.map(function (element) {
+      if (element === null || element === undefined) {
+     	return ''; 
+      }	
       return '"' + element.toString().replace(/"/g, '""') + '"';
     }).join(',');
   },
