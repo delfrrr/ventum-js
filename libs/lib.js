@@ -140,6 +140,12 @@ LibClass.prototype = {
         this.__base = savedBase;
         return result;
       };
+      for (key in first) {
+        constructor[key] = first[key];  
+      }
+      for (key in second) {
+        constructor[key] = second[key];  
+      }
     } else {
       constructor = first;
     }
