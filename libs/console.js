@@ -136,7 +136,7 @@ exports.instance = function (Lib) {
       //for arguments (Array-like object) or any normal array
       return Array.prototype.map.call(args, function (argument) {
         if (argument instanceof Error) {
-          var replacement = argument.toString() + ' ' + argument.stack.toString();
+          var replacement = argument.toString() + ' ' + (argument.stack && argument.stack.toString());
           return replacement;
         }
         return argument;
