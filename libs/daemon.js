@@ -40,9 +40,6 @@ var Daemon = function () {
   this._setIdent();
   this._registerHandlers();
   this._createPidFile();
-  if (this.daemonized || !this._daemonize) {
-    this._killOtherDaemonInstances(function () {});
-  }
 };
 Daemon.prototype = {
   /* try to find path, where to store pid file of daemin
@@ -161,21 +158,41 @@ Daemon.prototype = {
    * function's argument represents error
    * @return {undefined}
    * */
-  _killOtherDaemonInstances: function (callback) {
+  _killOtherDaemonInstances: function (depth, callback) {
+    if (depth instanceof Function) {
+      callback = depth;
+      depth = 0;
+    }
     childProcess.exec('ps -ae -opid,command', function (error, stdout, stderr) {
+      var countToKill = 0,
+        sleepTimeout = 400 + Math.round(Math.random() * 100);
       if (error !== null || stderr.length) {
         return callback(new Error(stderr.toString() || "can't get process list"));
       } 
       stdout.toString().split('\n').forEach(function (processLine) {
         var matches = processLine.match(/(\d+)\s+node/i),
           pid = matches && matches[1],
-          ident; 
+          ident;
         matches = processLine.match(/ident=([a-f0-9]{32})/);
         ident = matches && matches[1];
         if (pid !== null && ident !== null && Number(pid) !== process.pid && ident === this.argv.ident) {
+          //BIG WARNING if SIGNAL is sent, it does not mean, 
+          //that signal was recieved and processed. 
+          //so it's no guarantee, that process is dead just after kill
+          //and because of this it's required to check if someone left
+          //and kill them once more
           process.kill(pid, 'SIGTERM');
+          countToKill++;
         }
       }.bind(this));
+      if (countToKill !== 0 ) {
+        //if there were processes, required to kill, check them for existance
+        if (depth > 10) {
+          Console.error("can not kill all other instances of daemon. Give up");
+          process.exit();
+        }
+        return setTimeout(this._killOtherDaemonInstances.bind(this, depth++, callback), sleepTimeout);
+      }
       callback();
     }.bind(this)); 
   },
@@ -199,10 +216,15 @@ Daemon.prototype = {
    * @public
    * @return {undefined}
    * */
-  daemonize: function () {
-    if (this._daemonize && !this.daemonized) {
-      this.restart();
-    }
+  daemonize: function (callback) {
+    this._killOtherDaemonInstances(function () {
+      if (this._daemonize && !this.daemonized) {
+        this.restart();
+      }
+      if (callback instanceof Function) {
+        return callback();
+      }
+    }.bind(this));
   },
   /* restart process. fork (set new session, and command line options according to current command line options)
    * and exit from current process
