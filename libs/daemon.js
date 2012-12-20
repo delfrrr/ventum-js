@@ -20,6 +20,7 @@ var Fs = require('fs');
 var Console = Lib('console');
 var Helpers = Lib('helpers');
 var Path = require('path');
+var Crypto = require('crypto');
 /* @constructor 
  * class that handles all thing related with start, stop and errors
  * */
@@ -32,25 +33,49 @@ var Daemon = function () {
   this.nodeJs = process.argv[0];
   this.script = process.argv[1];
   this.argv = Helpers.parseArgv();
-  this.argv.pidfile = this._getPidFilePath();
+  this._getPidFilePath();
   this._daemonize = this.argv['-d'] !== undefined;
   this.daemonized = this.argv['-D'] !== undefined;
   this.shuttingDown = false;
+  this._setIdent();
   this._registerHandlers();
   this._createPidFile();
+  if (this.daemonized || !this._daemonize) {
+    this._killOtherDaemonInstances(function () {});
+  }
 };
 Daemon.prototype = {
   /* try to find path, where to store pid file of daemin
+   * if success -- store it in this.argv.pidfile
    * @private
-   * @return {String|undefined} return normalized path (if everything is ok) or undefined if 
    * path was not found
    * */
   _getPidFilePath: function () {
     var pidFile = this.argv.pidfile;
     if (pidFile !== true && pidFile !== undefined) {
-      return Path.resolve(process.cwd(), pidFile);
+      this.argv.pidfile = Path.resolve(process.cwd(), pidFile);
     }
-    return undefined;
+  },
+  /* generate unique identifier for current daemon instance
+   * it will be used to mark all daemon's children, to make possible 
+   * to identify and differentiate instances of daemon 
+   * @private
+   * @return {String} md5 hash from lot of things
+   * * */
+  _generateIdent: function () {
+    var hasher = Crypto.createHash('md5');
+    hasher.update(Math.random() + Date.now() + JSON.stringify(this.argv));
+    return hasher.digest('hex');
+  },
+  /* set ident into argv, if it is missing 
+   * @private
+   * @return  {undefined}
+   * */
+  _setIdent: function () {
+    if (!this.argv.ident) {
+      this.argv.ident = this._generateIdent();
+      process.title = this.nodeJs + ' ' + this.script + " " + Helpers.makeArgv(this.argv).join(' ');
+    }
   },
   /* register handlers on different events related to daemon's runtime 
    * (signals, exceptions)
@@ -128,6 +153,31 @@ Daemon.prototype = {
     } else {
       process.exit();
     }
+  },
+  /* kill other processes with same ident 
+   * (that has to be hanged workers of current daemon)
+   * @private
+   * @param {function({Error|null})} callback. function to call when work is done
+   * function's argument represents error
+   * @return {undefined}
+   * */
+  _killOtherDaemonInstances: function (callback) {
+    childProcess.exec('ps -ae -opid,command', function (error, stdout, stderr) {
+      if (error !== null || stderr.length) {
+        return callback(new Error(stderr.toString() || "can't get process list"));
+      } 
+      stdout.toString().split('\n').forEach(function (processLine) {
+        var matches = processLine.match(/(\d+)\s+node/i),
+          pid = matches && matches[1],
+          ident; 
+        matches = processLine.match(/ident=([a-f0-9]{32})/);
+        ident = matches && matches[1];
+        if (pid !== null && ident !== null && Number(pid) !== process.pid && ident === this.argv.ident) {
+          process.kill(pid, 'SIGTERM');
+        }
+      }.bind(this));
+      callback();
+    }.bind(this)); 
   },
   /* fork process. with apropriate command line options 
    * if this fork is "daemonizing" fork, detach from tty
