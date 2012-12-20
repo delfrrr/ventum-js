@@ -170,11 +170,12 @@ Daemon.prototype = {
         return callback(new Error(stderr.toString() || "can't get process list"));
       } 
       stdout.toString().split('\n').forEach(function (processLine) {
-        var matches = processLine.match(/(\d+)\s+node/i),
+        var matches = processLine.match(/^(\d+)\s+/i),
           pid = matches && matches[1],
           ident;
         matches = processLine.match(/ident=([a-f0-9]{32})/);
         ident = matches && matches[1];
+	Console.log('pid&ident', pid, ident);
         if (pid !== null && ident !== null && Number(pid) !== process.pid && ident === this.argv.ident) {
           //BIG WARNING if SIGNAL is sent, it does not mean, 
           //that signal was recieved and processed. 
