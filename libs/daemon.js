@@ -123,7 +123,7 @@ Daemon.prototype = {
    * @return {undefined}
    * */
   _createPidFile: function () {
-    var pidFile = this._getPidFilePath(),
+    var pidFile = this.argv.pidfile,
       fd;
     if (this.daemonized && pidFile) {
       try {
@@ -170,7 +170,7 @@ Daemon.prototype = {
         return callback(new Error(stderr.toString() || "can't get process list"));
       } 
       stdout.toString().split('\n').forEach(function (processLine) {
-        var matches = processLine.match(/^(\d+)\s+/i),
+        var matches = processLine.match(/^\s*(\d+)\s+/i),
           pid = matches && matches[1],
           ident;
         matches = processLine.match(/ident=([a-f0-9]{32})/);
@@ -182,7 +182,11 @@ Daemon.prototype = {
           //so it's no guarantee, that process is dead just after kill
           //and because of this it's required to check if someone left
           //and kill them once more
-          process.kill(pid, 'SIGTERM');
+          try {
+        	process.kill(pid, 'SIGKILL');
+	  } catch (e) {
+		Console.log('can not kill' + pid, e);	
+	  }
           countToKill++;
         }
       }.bind(this));
@@ -210,7 +214,8 @@ Daemon.prototype = {
     }
     newArgv = Helpers.makeArgv(this.argv);
     newArgv.unshift(this.script);
-    childProcess.spawn(this.nodeJs, newArgv, {setsid: this._daemonize && !this.daemonized});
+    var child = childProcess.spawn(this.nodeJs, newArgv, {setsid: this._daemonize && !this.daemonized});
+    Console.log("fork", process.pid, this.argv, child.pid);
   },
   /* daemonize, if processes command line tells to do so
    * if no -- do nothing, continue running in attached to tty mode
