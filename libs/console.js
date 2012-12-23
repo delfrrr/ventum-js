@@ -14,6 +14,7 @@ exports.instance = function (Lib) {
   Console = function () {
     this._initDateArrays();
     this.logFilePool = {};
+    this._logMessageQueue = {};
   };
   Console.prototype = {
     FORMAT : 'D M d H:i:s Y',
@@ -109,24 +110,22 @@ exports.instance = function (Lib) {
       }
       return this._daemon;
     },
-    _getFd: function (type, callback) {
-      var filename = this.types[type] ? this.types[type].path : this.types[this.defaultType].path;
-      if (this.logFilePool[filename] !== undefined) {
-        return callback(null, this.logFilePool[filename]);
-      }
+    _getFd: function (filename, callback) {
       if (this._getDaemon().shuttingDown) {
         //this can be called in uncauhgtException handler
         //it's important to make everything in syncronous way,
         //as async Fs api won't work
+        //TODO: error check
         this.logFilePool[filename] = Fs.openSync(filename, 'a+');
         return callback(null, this.logFilePool[filename]);
-      }
+      } 
       Fs.open(filename, 'a+', function (err, fd) {
         if (err) {
+          this.logFilePool[filename] = undefined;
           return callback(err, null);
         }
         this.logFilePool[filename] = fd;
-        callback(null, fd);
+        return callback(null, fd);
       }.bind(this));
     },
     _formatErrors: function (args) {
@@ -184,6 +183,31 @@ exports.instance = function (Lib) {
       }
       return this._formatters[format].apply(this, arguments);
     },
+    _writeMessageQueue: function (type, error, fd) {
+      var message,
+        writer = this._getDaemon().shuttingDown ? Fs.writeSync.bind(Fs) : Fs.write.bind(Fs); 
+      if (error) {
+        //can't do nothing. silently ignore 
+        this._logMessageQueue[type].length = 0;
+        return;
+      } 
+      while (message = this._logMessageQueue[type].shift()) {
+        writer(fd, message);  
+      }
+    },
+    _pulseMessageQueue: function (type) {
+      var filename = this.types[type] ? this.types[type].path : this.types[this.defaultType].path;
+      if (this.logFilePool[filename] === false) {
+        //file is opening now, it's callback will write queue
+        return;
+      }
+      if (this.logFilePool[filename] === undefined) {
+        //noone even tried to open log file before. Do this
+        this.logFilePool[filename] = false;
+        return this._getFd(filename, this._writeMessageQueue.bind(this, type));
+      }
+      this._writeMessageQueue(type, null, this.logFilePool[filename]);
+    },
     /* generic method that log's something 
      * depending on type argument, it log in "error" or in "log" mode
      * it takes into account Daemon mode. If process is running in 
@@ -205,17 +229,13 @@ exports.instance = function (Lib) {
           console.log(message);
         }
       }
-      this._getFd(type, function (err, fd) {
-        if (!err) {
-          if (this._getDaemon().shuttingDown) {
-            Fs.writeSync(fd, message);
-          } else {
-            Fs.write(fd, message);
-          }
-        }
-      }.bind(this));
+      if (this._logMessageQueue[type] === undefined) {
+        this._logMessageQueue[type] = [];
+      }
+      this._logMessageQueue[type].push(message);
+      this._pulseMessageQueue(type);
     },
-/**
+    /**
      * Write error in std_error with Appace like message
      * 
      * @param {String|Error} message The message or instance of Error
