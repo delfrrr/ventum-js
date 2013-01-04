@@ -175,7 +175,6 @@ Daemon.prototype = {
           ident;
         matches = processLine.match(/ident=([a-f0-9]{32})/);
         ident = matches && matches[1];
-	Console.log('pid&ident', pid, ident);
         if (pid !== null && ident !== null && Number(pid) !== process.pid && ident === this.argv.ident) {
           //BIG WARNING if SIGNAL is sent, it does not mean, 
           //that signal was recieved and processed. 
@@ -183,10 +182,11 @@ Daemon.prototype = {
           //and because of this it's required to check if someone left
           //and kill them once more
           try {
-        	process.kill(pid, 'SIGKILL');
-	  } catch (e) {
-		Console.log('can not kill' + pid, e);	
-	  }
+            Console.log('kill %d %s', pid, ident);
+        	  process.kill(pid, 'SIGKILL');
+	        } catch (e) {
+		        Console.log('can not kill' + pid, e);	
+	        }
           countToKill++;
         }
       }.bind(this));
