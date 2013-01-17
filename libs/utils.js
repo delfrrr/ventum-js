@@ -1,3 +1,4 @@
+var EventEmitter = require('events').EventEmitter;
 /* @fileOverview different helper functions, asyncronous helpers (for, forEach, serial) 
  * */
 var Utils = function () {
@@ -74,8 +75,70 @@ Utils.prototype = {
       }
     };
     next(next);
+  },
+  /* convenience method to use with serial. 
+   * genereate new function that does same as fcn,
+   * but it takes one more argument (first), means error
+   * and if it is, converted to boolean, is true, dont do
+   * any work, just call callback
+   * */
+  skipIfError: function (fcn) {
+    return function () {
+      var callback, error; 
+      if (arguments.length && arguments[arguments.length - 1] instanceof Function) {
+        callback = arguments[arguments.length -1];  
+      };
+      if (arguments.length &&  !(arguments[0] instanceof Function)) {
+        error = arguments[0];
+      }
+      if (error) {
+        if (callback) {
+          return callback(error);
+        }
+        return; 
+      }
+      Array.prototype.shift.call(arguments);
+      return fcn.apply(this, arguments);
+    }; 
+  },
+  /* convenience method to use with serial. 
+   * opposite to skipIfError
+   * genereate new function that does same as fcn,
+   * but it takes one more argument (first), means error
+   * anyway, if error true or false, do the work
+   * */
+  continueIfError: function (fcn) {
+    return function () {
+      Array.prototype.shift.call(arguments);
+      return fcn.apply(this, arguments);
+    }; 
+  },
+};
+/* implement library, that pushes functions into queue, 
+ * until something will be ready. 
+ * something readiness is notified by ready
+ * run method begins work, that will make 
+ * something ready
+ * */
+var Waiter = function () {
+  this._events = new EventEmitter();
+  this._busy = false;
+  this.wait = function (callback) {
+    this._events.once('ready', callback);
+  };
+  this.ready =  function () {
+    this._busy = false;
+    Array.prototype.unshift.call(arguments, 'ready');
+    this._events.emit.apply(this._events, arguments);
+  };
+  this.run =  function (task) {
+    if (!this._busy) {
+      this._busy = true;
+      task();
+    }
   }
 };
+Utils.prototype.Waiter = Waiter;
 module.exports.instance = function (Lib) {
   return Utils;
-};
+i};
