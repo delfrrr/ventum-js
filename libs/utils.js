@@ -141,4 +141,4 @@ var Waiter = function () {
 Utils.prototype.Waiter = Waiter;
 module.exports.instance = function (Lib) {
   return Utils;
-i};
+};
