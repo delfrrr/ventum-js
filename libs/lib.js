@@ -17,20 +17,23 @@ LibClass = function (app, service) {
   this._libs = {};
   this._levels = [];
   this._levelFolders = {};
-  this._levels = [
-    __dirname + '/',
-    app + '/libs/',
-    app + '/conf/',
-    app + '/conf/local/',
-    service + '/libs/',
-    service + '/conf/',
-    service + '/conf/local/'
-  ];
+  this._getLevels(app, service);
   this._viewLevelsContents();
   return this;
 };
 LibClass.prototype = {
   MOD_SEPARATOR: '_',
+  _getLevels: function (app, service) {
+    this._levels = [
+      __dirname + '/',
+      app + '/libs/',
+      app + '/conf/',
+      app + '/conf/local/',
+      service + '/libs/',
+      service + '/conf/',
+      service + '/conf/local/'
+    ];
+  },
   _viewLevelsContents: function () {
     this._levels.forEach(function (path) {
       try {
@@ -218,5 +221,9 @@ if (!match) {
 }
 service = match[0];
 app = match[1];
+module.exports.cls = function () {
+  return LibClass;
+};
 instance = new LibClass(app, service);
-module.exports = instance.get.bind(instance);
+var lib = new (instance.get('lib')) (app, service);
+module.exports = lib.get.bind(lib);
