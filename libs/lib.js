@@ -83,7 +83,11 @@ LibClass.prototype = {
   },
   _mergeJSON: function (first, second) {
     var result = {};
-    if (typeof first !== typeof second || typeof first === 'number' || typeof first === 'string' || second instanceof Array) {
+    if (typeof first !== typeof second ||
+        typeof first === 'number' ||
+        typeof first === 'string' ||
+        typeof first === 'boolean' ||
+        second instanceof Array) {
       return second;
     }
     Object.keys(first).forEach(function (key) {
