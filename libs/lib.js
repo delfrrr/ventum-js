@@ -166,8 +166,12 @@ LibClass.prototype = {
       fullName = this._getFullName(name, mods);
     Result.prototype = {};
     Result._original = true;
+    //at first load main module from all override levels
     this._levels.forEach(function (level) {
       this._require(libObj, level, name);
+    }.bind(this));
+    //at second, load all it's mods from all override levels
+    this._levels.forEach(function (level) {
       mods.forEach(function (mod) {
         this._require(libObj, level, name + this.MOD_SEPARATOR + mod);
       }.bind(this));
