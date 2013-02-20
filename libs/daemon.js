@@ -165,6 +165,36 @@ Daemon.prototype = {
       process.exit();
     }
   },
+  /* get list of pids, of processes that are instances of service
+   * identified by ident
+   * @public
+   * @param {String} ident. identifier of service
+   * @param {function ({null|Error}, {Array<Number>|undefined})} callback
+   * function to call when work is done. first function's argument represents error
+   * second, if everything is ok, is array of process identifiers
+   * @return {undefined}
+   * */
+  getRunningInstances: function (ident, callback) {
+    childProcess.exec('ps -ae -opid,command', function (error, stdout, stderr) {
+      var instances;
+      if (error !== null || stderr.length) {
+        return callback(new Error(stderr.toString() || "can't get process list"));
+      } 
+      instances = stdout.toString().split('\n').reduce(function (list, processLine) {
+        var matches = processLine.match(/^\s*(\d+)\s+/i),
+          pid = matches && matches[1],
+          processIdent;
+        matches = processLine.match(/ident=([a-f0-9]{32})/);
+        processIdent = matches && matches[1];
+        if (pid !== null && processIdent !== null && processIdent === ident) {
+          list.push(Number(pid)); 
+        }
+        return list;
+      }, []);
+      callback(null, instances);
+    }.bind(this)); 
+
+  },
   /* kill services identified by ident (except current process, 
    * if it's identifier is ident)
    * killing is done in few iteration, until all processes, chosen
@@ -185,19 +215,14 @@ Daemon.prototype = {
       callback = depth;
       depth = 0;
     }
-    childProcess.exec('ps -ae -opid,command', function (error, stdout, stderr) {
+    this.getRunningInstances(ident, function (error, instances) {
       var countToKill = 0,
         sleepTimeout = 400 + Math.round(Math.random() * 100);
-      if (error !== null || stderr.length) {
-        return callback(new Error(stderr.toString() || "can't get process list"));
-      } 
-      stdout.toString().split('\n').forEach(function (processLine) {
-        var matches = processLine.match(/^\s*(\d+)\s+/i),
-          pid = matches && matches[1],
-          processIdent;
-        matches = processLine.match(/ident=([a-f0-9]{32})/);
-        processIdent = matches && matches[1];
-        if (pid !== null && processIdent !== null && Number(pid) !== process.pid && processIdent === ident) {
+      if (error) {
+        return callback(error);
+      }
+      countToKill = instances.reduce(function (count, pid) {
+        if (pid !== process.pid) {
           //BIG WARNING if SIGNAL is sent, it does not mean, 
           //that signal was recieved and processed. 
           //so it's no guarantee, that process is dead just after kill
@@ -205,13 +230,14 @@ Daemon.prototype = {
           //and kill them once more
           try {
             Console.log('kill %d %s', pid, processIdent);
-        	  process.kill(pid, 'SIGKILL');
+            process.kill(pid, 'SIGKILL');
 	        } catch (e) {
 		        Console.log('can not kill' + pid, e);	
 	        }
-          countToKill++;
+          count++;
         }
-      }.bind(this));
+        return count; 
+      }, 0);
       if (countToKill !== 0 ) {
         //if there were processes, required to kill, check them for existance
         if (depth > this.MAX_KILL_TRIES) {
@@ -220,7 +246,7 @@ Daemon.prototype = {
         return setTimeout(this._killOtherDaemonInstances.bind(this, ident, depth++, callback), sleepTimeout);
       }
       callback(null);
-    }.bind(this)); 
+    }.bind(this));
   },
   /* fork process. with apropriate command line options 
    * if this fork is "daemonizing" fork, detach from tty
@@ -250,7 +276,7 @@ Daemon.prototype = {
         process.exit();
       }
       if (this._daemonize && !this.daemonized) {
-        this.restart();
+        return this.restart(callback);
       }
       if (callback instanceof Function) {
         return callback();
@@ -268,12 +294,17 @@ Daemon.prototype = {
     this._killOtherDaemonInstances(ident, callback);
   },
   /* restart process. fork (set new session, and command line options according to current command line options)
-   * and exit from current process
+   * and exit from current process (if no callback present)
    * @public
+   * @param {Function|undefined} callback. function to call after fork
+   * if present it's called. If missing, current process is exited
    * @return {undefined}
    * */
-  restart: function () {
+  restart: function (callback) {
     this._fork();
+    if (callback instanceof Function) { 
+      return callback();
+    }
     process.exit();
   }
 };
