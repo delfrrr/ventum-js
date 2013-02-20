@@ -6,14 +6,9 @@
  * @constructor
  * @return {object} this for chain
  */
-var fs = require('fs'),
-  parent,
-  match,
-  service,
-  app,
-  instance,
-  LibClass;
-LibClass = function (app, service) {
+var fs = require('fs');
+var Path = require('path');
+var LibClass = function (app, service) {
   this._libs = {};
   this._levels = [];
   this._levelFolders = {};
@@ -153,6 +148,12 @@ LibClass.prototype = {
     for (key in first.prototype) {
       constructor.prototype[key] = first.prototype[key];
     }
+    for (key in first) {
+      constructor[key] = first[key];
+    }
+    for (key in second) {
+      constructor[key] = second[key];
+    }
     this._mergeSecond(constructor.prototype, first, second);
     return constructor;
   },
@@ -162,9 +163,7 @@ LibClass.prototype = {
       arr: []
     },
       Result = function () {},
-      lib,
-      fullName = this._getFullName(name, mods),
-      instance;
+      fullName = this._getFullName(name, mods);
     Result.prototype = {};
     Result._original = true;
     this._levels.forEach(function (level) {
@@ -214,20 +213,45 @@ LibClass.prototype = {
     return this._libs[fullName] || this._include(name, mods);
   }
 };
-// geting application and service folders
-parent = module;
-while (parent.parent) {
-  parent = parent.parent;
-}
-match = parent.filename.match(/(.*)\/services\/([^\/]+)/);
-if (!match) {
-  throw new Error('Allowed to call "ventum" only insine service');
-}
-service = match[0];
-app = match[1];
-module.exports.cls = function () {
-  return LibClass;
+/* Export LibClass get function to the outer world.
+ * That is done in a little bit tricky way:
+ * at first instance of LibClass is created,
+ * and then, use it to load LibClass definition, with overridings from
+ * all defined override levels
+ * That gives posibility to override it's behaviour, for every custom project.
+ * Also export some information about path to application, path to current service file,
+ * path to all services folder, and so on
+ * */
+LibClass.createInstance = function () {
+  var match,
+    parent,
+    service,
+    serviceSubfolder,
+    app,
+    initialInstance,
+    finalInstance;
+  // geting application and service folders
+  parent = module;
+  while (parent.parent) {
+    parent = parent.parent;
+  }
+  match = parent.filename.match(/(.*)\/services\/([^\/]+)/);
+  if (!match) {
+    throw new Error('Allowed to call "ventum" only insine service');
+  }
+  service = match[0];
+  app = match[1];
+  serviceSubfolder = match[2];
+  module.exports.cls = function () {
+    return LibClass;
+  };
+  initialInstance = new LibClass(app, service);
+  finalInstance = new (initialInstance.get('lib'))(app, service);
+  module.exports = finalInstance.get.bind(finalInstance);
+  module.exports.app = app;
+  module.exports.services = app + '/services/';
+  module.exports.service = service;
+  module.exports.serviceFolder = serviceSubfolder;
+  module.exports.serviceFile = Path.basename(process.mainModule.filename, Path.extname(process.mainModule.filename));
 };
-instance = new LibClass(app, service);
-var lib = new (instance.get('lib')) (app, service);
-module.exports = lib.get.bind(lib);
+LibClass.createInstance();
