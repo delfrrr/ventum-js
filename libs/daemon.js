@@ -229,7 +229,7 @@ Daemon.prototype = {
           //and because of this it's required to check if someone left
           //and kill them once more
           try {
-            Console.log('kill %d %s', pid, processIdent);
+            Console.log('kill %d %s', pid, ident);
             process.kill(pid, 'SIGKILL');
 	        } catch (e) {
 		        Console.log('can not kill' + pid, e);	
