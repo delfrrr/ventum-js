@@ -99,7 +99,7 @@ Helpers.prototype = {
         }
       } else if (state.state === FIELD_ESCAPED) {
         if (i === string.length) {
-          row.push(string.slice(state.start, state.start + state.length).replace('""', '"'));
+          row.push(string.slice(state.start, state.start + state.length).replace(/""/g, '"'));
           state.state = NOT_FIELD;
           state.start = i;
           state.length = 0;
@@ -110,7 +110,7 @@ Helpers.prototype = {
         }
       } else if (state.state === FIELD_ESCAPED_QUOTE) {
         if (i === string.length || currentChar === ',') {
-          row.push(string.slice(state.start, state.start + state.length).replace('""', '"'));
+          row.push(string.slice(state.start, state.start + state.length).replace(/""/g, '"'));
           state.state = NOT_FIELD;
           state.start = i;
           state.length = 0;
