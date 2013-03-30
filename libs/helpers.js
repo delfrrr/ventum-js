@@ -33,6 +33,32 @@ Helpers.prototype = {
       return element + '=' + argv[element];
     });
   },
+  htmlUnescape: function (string) {
+	  var from,
+      table = {
+        '&quot;': '"',
+        '&nbsp;': ' ',
+        '&lt;': '<',
+        '&gt;': '>',
+        '&amp;': '&'
+      };
+	  for (from in table) {
+      string = string.replace(new RegExp(from, 'g'), table[from]);
+	  }
+	  return string;
+  },
+  htmlEscape: function (string) {
+    var from,
+      table = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;'
+      };
+    for (from in table) {
+      string = string.replace(new RegExp(from, 'g'), table[from]);
+    }
+    return string;
+	},
   /* parse csv formatted row.
    * test are in function body.
    * @param {String} string -- string to parse
