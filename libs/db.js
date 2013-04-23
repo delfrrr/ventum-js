@@ -275,13 +275,13 @@ DbDriver.prototype.query = function (query) {
     }
   });
   if (this.statistics) {
-    if (this.statistics[query] === undefined) {
-      this.statistics[query] = {count: 0, time: 0};
-    }
     timeStart = Date.now();
     if (callback instanceof Function) {
       originalCallback = callback;
       callback = function () {
+        if (this.statistics[query] === undefined) {
+          this.statistics[query] = {count: 0, time: 0};
+        }
         this.statistics[query].count++;
         this.statistics[query].time += Date.now() - timeStart;
         originalCallback.apply(this, arguments);
@@ -289,6 +289,9 @@ DbDriver.prototype.query = function (query) {
       return this._query(query, queryData, callback);
     }
     tmp = this._query(query, queryData, callback);
+    if (this.statistics[query] === undefined) {
+      this.statistics[query] = {count: 0, time: 0};
+    }
     this.statistics[query].count++;
     this.statistics[query].time += Date.now() - timeStart;
     return tmp;
