@@ -1,16 +1,16 @@
 /*@fileOverview library that makes daemonizing easy
  *parse processes argv, and do apropriate things
- *(detach from console, daemonize, on error, signal, exception -- restart, 
+ *(detach from console, daemonize, on error, signal, exception -- restart,
  *(or run in attached to tty mode. don't daemonize, on signal or error or exception -- die
  * understands next command line options
  * -d -- makes process detach from tty and daemonize
- * -D -- 'internal option', signals to process, that it is 
+ * -D -- 'internal option', signals to process, that it is
  * running in daemonized mode, and creation of new session is not required
  * option is used only when daemonizing, and is passed to daemonized childs
  * to signal them, that they are running in daemon mode
- * pidfile=/path/to/pidfile path to file, where to write pidfile 
- * Daemon and Console libraries are dependant between themselves 
- * Daemon defines mode of logging to Console (log into file or to tty) 
+ * pidfile=/path/to/pidfile path to file, where to write pidfile
+ * Daemon and Console libraries are dependant between themselves
+ * Daemon defines mode of logging to Console (log into file or to tty)
  * but also Daemon uses Console to log restarts, uncaught exceptions, and other events
  * to solve this cyclic dependency Console library loads Daemon library in a little bit strange, asyncronous way
  * */
@@ -21,12 +21,13 @@ var Console = Lib('console');
 var Helpers = Lib('helpers');
 var Path = require('path');
 var Crypto = require('crypto');
-/* @constructor 
+var Os = require('os');
+/* @constructor
  * class that handles all thing related with start, stop and errors
  * */
 var Daemon = function () {
   //don't event try to call Console in constructor of Daemon class
-  //or you'll have a lot of strange errors related with cyclic dependencies 
+  //or you'll have a lot of strange errors related with cyclic dependencies
   //between Console and Daemon libraries
   //if you really need to do this -- execute call in process.nextTick
   //or in any other asyncronous way
@@ -40,12 +41,19 @@ var Daemon = function () {
   this.setIdent();
   this._registerHandlers();
   this._createPidFile();
+  //do not rely too much on Os.hostname();
+  //it can be changed, an can break the algorithm,
+  //that is used to generate ident's.
+  //so use it only as backup
+  this.HOST = this.HOST || Os.hostname();
 };
 Daemon.prototype = {
   /* number of tries when killing other instances of service
    * for details read description of _killOtherDaemonInstances function
    * */
   MAX_KILL_TRIES: 10,
+  CLUSTER: 'developement',
+  HOST: 'duster',
   /* try to find path, where to store pid file of daemin
    * if success -- store it in this.argv.pidfile
    * @private
@@ -58,25 +66,68 @@ Daemon.prototype = {
     }
   },
   /* generate unique identifier for current daemon instance
-   * it will be used to mark all daemon's children, to make possible 
-   * to identify and differentiate instances of daemon 
+   * it will be used to mark all daemon's children, to make possible
+   * to identify and differentiate instances of daemon
    * @private
    * @return {String} md5 hash from lot of things
    * * */
-  _generateIdent: function () {
+  _countIdent: function (data) {
     var hasher = Crypto.createHash('md5');
-    hasher.update(Math.random() + Date.now() + JSON.stringify(this.argv));
+    hasher.update(data.toString());
     return hasher.digest('hex');
   },
-  /* set ident into argv, if it is missing 
+  /* generate ident for service instance using argument,
+   * complementing it with defaults
    * @public
+   * @param {undefined | String | Object} ident, identifier or data
+   * to build identifier,
+   * if param is object, next fields are used:
+   * cluster -- name of cluster (cluster is group of hosts, with their own services)
+   * host -- hostname (it can be name from DNS or any other string)
+   * service -- name of service any string, but "serviceFolder/serviceFile" is used as default
+   * folder string
+   * name string folder and name are used to generate service, if it's missing. and only
+   * if service is missing and (folder or name are missing) default for service is used
+   * instance some string, that differentiated one instance of service from other
+   * running on the same host, in the same cluster
+   * @return {String} returns string ident (as for now md5 hash)
+   * */
+  generateIdent: function (ident) {
+    if (!(ident instanceof Object) && !(typeof (ident) === 'string' && ident.match(/[0-9a-f]{32}/i))) {
+      ident = {};
+    }
+    if (ident instanceof Object) {
+      ident.cluster = ident.cluster || this.CLUSTER;
+      ident.host = ident.host || this.HOST;
+      if (!ident.service) {
+        if (ident.folder && ident.name) {
+          ident.service = ident.folder + '/' + ident.name;
+        } else {
+          ident.service = Lib.serviceFolder + '/' + Lib.serviceFile;
+        }
+      }
+      ident.instance = ident.instance !== undefined ? ident.instance : process.argv.slice(2).join(' ');
+      //filter out trash from ident object
+      ident = this._countIdent(JSON.stringify({
+        cluster: ident.cluster,
+        host: ident.host,
+        service: ident.service,
+        instance: ident.instance
+      }));
+    }
+    return ident;
+  },
+  /* set ident into argv, if it is missing
+   * @public
+   * @param {undefined | String | Object} forceIdent, identifier or data
+   * to build identifier, or nothing (defaults will be used)
    * @return  {undefined}
    * */
   setIdent: function (forceIdent) {
-    forceIndet = forceIdent && forceIdent.match(/[0-9a-f]{32}/i) && forceIdent;
+    forceIdent = this.generateIdent(forceIdent);
     if (!this.argv.ident || forceIdent) {
-      this.argv.ident = forceIdent || this._generateIdent();
-      process.title = this.nodeJs + ' ' + this.script + " " + Helpers.makeArgv(this.argv).join(' ');
+      this.argv.ident = forceIdent;
+      process.title = this.nodeJs + ' ' + this.script + ' ' + Helpers.makeArgv(this.argv).join(' ');
     }
   },
   /* get ident of current service
@@ -84,11 +135,9 @@ Daemon.prototype = {
    * @return {String} -- identifier of current service;
    * */
   getIdent: function () {
-    //be shure that we have at least autogenerated ident
-    this.setIdent();
     return this.argv.ident;
   },
-  /* register handlers on different events related to daemon's runtime 
+  /* register handlers on different events related to daemon's runtime
    * (signals, exceptions)
    * @private
    * @return {undefined}
@@ -130,7 +179,7 @@ Daemon.prototype = {
   /* create pid file, and write processes pid into it
    * (if path to pid file was found)
    * and if process is running in daemon mode
-   * all filesystem operations are syncronous, 
+   * all filesystem operations are syncronous,
    * it's thought that this function will be called only once
    * at program start
    * @private
@@ -150,7 +199,7 @@ Daemon.prototype = {
     }
   },
   /* uncaught exception handler. if running in daemon mode -- restart
-   * if in attached to tty mode -- just exit 
+   * if in attached to tty mode -- just exit
    * @private
    * @return undefined
    * */
@@ -179,7 +228,7 @@ Daemon.prototype = {
       var instances;
       if (error !== null || stderr.length) {
         return callback(new Error(stderr.toString() || "can't get process list"));
-      } 
+      }
       instances = stdout.toString().split('\n').reduce(function (list, processLine) {
         var matches = processLine.match(/^\s*(\d+)\s+/i),
           pid = matches && matches[1],
@@ -187,15 +236,15 @@ Daemon.prototype = {
         matches = processLine.match(/ident=([a-f0-9]{32})/);
         processIdent = matches && matches[1];
         if (pid !== null && processIdent !== null && processIdent === ident) {
-          list.push(Number(pid)); 
+          list.push(Number(pid));
         }
         return list;
       }, []);
       callback(null, instances);
-    }.bind(this)); 
+    }.bind(this));
 
   },
-  /* kill services identified by ident (except current process, 
+  /* kill services identified by ident (except current process,
    * if it's identifier is ident)
    * killing is done in few iteration, until all processes, chosen
    * to be killed, will be dead, or until MAX_KILL_TRIES iteration will be done
@@ -205,7 +254,7 @@ Daemon.prototype = {
    * @param {String} ident. identifier of service to kill
    * @param {Number | function({Error|null})} depth. number of  kill iteration (if Number)
    * or callback if function. in such situation 0 is used as depth
-   * @param {undefined | function ({Error|null})} callback.  if depth is Number, this argument is 
+   * @param {undefined | function ({Error|null})} callback.  if depth is Number, this argument is
    * callback. if depth is callback -- argument is ignored
    * function's argument represents error
    * @return {undefined}
@@ -223,22 +272,22 @@ Daemon.prototype = {
       }
       countToKill = instances.reduce(function (count, pid) {
         if (pid !== process.pid) {
-          //BIG WARNING if SIGNAL is sent, it does not mean, 
-          //that signal was recieved and processed. 
+          //BIG WARNING if SIGNAL is sent, it does not mean,
+          //that signal was recieved and processed.
           //so it's no guarantee, that process is dead just after kill
           //and because of this it's required to check if someone left
           //and kill them once more
           try {
             Console.log('kill %d %s', pid, ident);
             process.kill(pid, 'SIGKILL');
-	        } catch (e) {
-		        Console.log('can not kill' + pid, e);	
-	        }
+          } catch (e) {
+            Console.log('can not kill' + pid, e);
+          }
           count++;
         }
-        return count; 
+        return count;
       }, 0);
-      if (countToKill !== 0 ) {
+      if (countToKill !== 0) {
         //if there were processes, required to kill, check them for existance
         if (depth > this.MAX_KILL_TRIES) {
           return callback(new Error('can not kill all requires instances of deamon. Give up'));
@@ -248,9 +297,9 @@ Daemon.prototype = {
       callback(null);
     }.bind(this));
   },
-  /* fork process. with apropriate command line options 
+  /* fork process. with apropriate command line options
    * if this fork is "daemonizing" fork, detach from tty
-   * starting own session 
+   * starting own session
    * @private
    * @return {undefined}
    * */
@@ -283,10 +332,10 @@ Daemon.prototype = {
       }
     }.bind(this));
   },
-  /* kill all instances of serice identified by ident 
+  /* kill all instances of serice identified by ident
    * (except current, if also represents that service)
    * @public
-   * @param {String} ident. service to kill identifier. 
+   * @param {String} ident. service to kill identifier.
    * @param {function (Error|null)} callback. function to call when work is done
    * @return {undefined}
    * */
@@ -302,13 +351,13 @@ Daemon.prototype = {
    * */
   restart: function (callback) {
     this._fork();
-    if (callback instanceof Function) { 
+    if (callback instanceof Function) {
       return callback();
     }
     process.exit();
   }
 };
 
-module.exports.instance = function (Lib) {
+module.exports.instance = function () {
   return Daemon;
 };
