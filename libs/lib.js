@@ -142,6 +142,7 @@ LibClass.prototype = {
         this.__base = savedBase;
         return result;
       };
+      constructor.prototype = Object.create(second.prototype);
     } else {
       constructor = first;
     }
