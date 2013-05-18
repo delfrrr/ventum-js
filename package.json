@@ -1,4 +1,10 @@
 {
   "name": "ventum",
-  "main": "./libs/lib.js"
+  "main": "./libs/lib.js",
+  "version": "v0.1.0",
+  "description": "simple web framework and helpers libraries",
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:delfrrr/ventum-js.git"
+  }
 }
