@@ -1,5 +1,5 @@
 var EventEmitter = require('events').EventEmitter;
-/* @fileOverview different helper functions, asyncronous helpers (for, forEach, serial) 
+/* @fileOverview different helper functions, asyncronous helpers (for, forEach, serial)
  * */
 var Utils = function () {
 };
@@ -16,12 +16,19 @@ Utils.prototype = {
    * @param {function()} handler callback, to call where loop ends
    * */
   asyncForEach: function (arr, method, handler) {
+    var nextTick;
+    var matches = process.version.match(/v(\d+)\.(\d+).(\d+)/);
+    if (matches && matches[2] >= 10) {
+      nextTick = setImmediate;
+    } else {
+      nextTick = process.nextTick;
+    }
     var i = 0,
       len = arr.length,
       next = function () {
         if (i < len) {
           i++;
-          process.nextTick(function () {method(arr[i - 1], i - 1, next); });
+          nextTick(function () {method(arr[i - 1], i - 1, next); }, 0);
         } else {
           handler();
         }
@@ -46,8 +53,8 @@ Utils.prototype = {
     }, handler);
   },
   /* run list of asyncronous function one by one
-   * @param {...function(...{?}, function(...{?}))} functions to be called 
-   * each function accepts any number of arguments, but the last argument is function to be called after 
+   * @param {...function(...{?}, function(...{?}))} functions to be called
+   * each function accepts any number of arguments, but the last argument is function to be called after
    * current function do it's work
    * callback accepts any number of arguments, that automatically will be passet to next function to call
    * */
@@ -76,7 +83,7 @@ Utils.prototype = {
     };
     next(next);
   },
-  /* convenience method to use with serial. 
+  /* convenience method to use with serial.
    * genereate new function that does same as fcn,
    * but it takes one more argument (first), means error
    * and if it is, converted to boolean, is true, dont do
@@ -84,10 +91,10 @@ Utils.prototype = {
    * */
   skipIfError: function (fcn) {
     return function () {
-      var callback, error; 
+      var callback, error;
       if (arguments.length && arguments[arguments.length - 1] instanceof Function) {
-        callback = arguments[arguments.length -1];  
-      };
+        callback = arguments[arguments.length - 1];
+      }
       if (arguments.length &&  !(arguments[0] instanceof Function)) {
         error = arguments[0];
       }
@@ -95,13 +102,13 @@ Utils.prototype = {
         if (callback) {
           return callback(error);
         }
-        return; 
+        return;
       }
       Array.prototype.shift.call(arguments);
       return fcn.apply(this, arguments);
-    }; 
+    };
   },
-  /* convenience method to use with serial. 
+  /* convenience method to use with serial.
    * opposite to skipIfError
    * genereate new function that does same as fcn,
    * but it takes one more argument (first), means error
@@ -111,13 +118,13 @@ Utils.prototype = {
     return function () {
       Array.prototype.shift.call(arguments);
       return fcn.apply(this, arguments);
-    }; 
-  },
+    };
+  }
 };
-/* implement library, that pushes functions into queue, 
- * until something will be ready. 
+/* implement library, that pushes functions into queue,
+ * until something will be ready.
  * something readiness is notified by ready
- * run method begins work, that will make 
+ * run method begins work, that will make
  * something ready
  * */
 var Waiter = function () {
@@ -136,9 +143,9 @@ var Waiter = function () {
       this._busy = true;
       task();
     }
-  }
+  };
 };
 Utils.prototype.Waiter = Waiter;
-module.exports.instance = function (Lib) {
+module.exports.instance = function () {
   return Utils;
 };

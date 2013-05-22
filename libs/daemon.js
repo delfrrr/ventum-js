@@ -54,6 +54,7 @@ Daemon.prototype = {
   MAX_KILL_TRIES: 10,
   CLUSTER: 'developement',
   HOST: 'duster',
+  IDENT_LENGTH: 16,
   /* try to find path, where to store pid file of daemin
    * if success -- store it in this.argv.pidfile
    * @private
@@ -74,7 +75,7 @@ Daemon.prototype = {
   _countIdent: function (data) {
     var hasher = Crypto.createHash('md5');
     hasher.update(data.toString());
-    return hasher.digest('hex');
+    return hasher.digest('hex').slice(0, this.IDENT_LENGTH);
   },
   /* generate ident for service instance using argument,
    * complementing it with defaults
@@ -93,8 +94,12 @@ Daemon.prototype = {
    * @return {String} returns string ident (as for now md5 hash)
    * */
   generateIdent: function (ident) {
-    if (!(ident instanceof Object) && !(typeof (ident) === 'string' && ident.match(/[0-9a-f]{32}/i))) {
+    if (!(ident instanceof Object) &&
+        !(typeof (ident) === 'string' && ident.match(new RegExp('[0-9a-f]{' + this.IDENT_LENGTH + ',}', 'i')))) {
       ident = {};
+    }
+    if (typeof(ident) === 'string') {
+      ident = ident.slice(0, this.IDENT_LENGTH);
     }
     if (ident instanceof Object) {
       ident.cluster = ident.cluster || this.CLUSTER;
@@ -127,7 +132,12 @@ Daemon.prototype = {
     forceIdent = this.generateIdent(forceIdent);
     if (!this.argv.ident || forceIdent) {
       this.argv.ident = forceIdent;
-      process.title = this.nodeJs + ' ' + this.script + ' ' + Helpers.makeArgv(this.argv).join(' ');
+      process.title = [
+        this.nodeJs,
+        'ident=' + this.argv.ident,
+        this.script,
+        Helpers.makeArgv(this.argv).join(' ')
+      ].join(' ');
     }
   },
   /* get ident of current service
@@ -145,12 +155,7 @@ Daemon.prototype = {
   _registerHandlers: function () {
     process.on('uncaughtException', this._exceptionHandler.bind(this));
     process.on('exit', this._exitHandler.bind(this));
-    //it's a little bit sensless to catch sigint and sigkill
-    //anyway sigkill is not blockable
-    //normally sigint is ctrl+c, means we are running on console
-    //and therefore, we don't use pidfiles at all
     process.on('SIGINT',  this._signalHandler.bind(this));
-    process.on('SIGKILL', this._signalHandler.bind(this));
     process.on('SIGTERM', this._signalHandler.bind(this));
   },
   /* SIGINT, SIGKILL, SIGTERM handler
@@ -233,13 +238,13 @@ Daemon.prototype = {
         var matches = processLine.match(/^\s*(\d+)\s+/i),
           pid = matches && matches[1],
           processIdent;
-        matches = processLine.match(/ident=([a-f0-9]{32})/);
+        matches = processLine.match(new RegExp('ident=([a-f0-9]{' + this.IDENT_LENGTH + '})', 'i'));
         processIdent = matches && matches[1];
         if (pid !== null && processIdent !== null && processIdent === ident) {
           list.push(Number(pid));
         }
         return list;
-      }, []);
+      }.bind(this), []);
       callback(null, instances);
     }.bind(this));
 
