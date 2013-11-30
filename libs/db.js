@@ -70,8 +70,11 @@ DbDriver.prototype.prepareQuery = function (query, data) {
   var i = 0,
     context = {},
     preparedData  = [],
-    preparedQuery = query.replace(/\$((\d+)|([\w_]+))*/ig, function (match, identifier, digit, name) {
+    preparedQuery = query.replace(/(\\?)\$((\d+)|([\w_]+))*/ig, function (match, escapeBackSlash, identifier, digit, name) {
       var placeholderNum;
+      if (escapeBackSlash) {
+        return '$' + (identifier || '');
+      }
       if (identifier === undefined || identifier === '') {
         placeholderNum = i++;
       } else if (digit !== undefined  && digit !== '') {
