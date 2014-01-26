@@ -5,6 +5,133 @@ var Lib = require('ventum');
 var Console = Lib('console');
 var util = require('util');
 var EventEmitter = require('events').EventEmitter;
+var Vow = require('vow');
+
+/**
+ * Simple pool library. Provides resources pooling.
+ * @constructor
+ * @param {Number} size Pool size
+ * @param {Function} allocatorAsync function that creates new
+ * pooled item in asyncronous way
+ * @param {Function} allocatorSync function that creates new
+ * pooled item in synchronous way
+ */
+var Pool = function (size, allocatorAsync, allocatorSync) {
+	this._size = size < 1 ? 1 : size;
+	this._pool = [];
+	this._allocatorAsync = allocatorAsync;
+	this._allocatorSync = allocatorSync;
+  this._checkUVThreadPool();
+};
+
+Pool.prototype = {
+  
+  //default size of libuv's thread pool
+  //(as for node  <= 0.10 libuv has fixed size)
+  DEFAULT_UV_THREADPOOL_SIZE: 4,
+
+  _checkUVThreadPool: function () {
+    var threadPoolSize = Number(process.env['UV_THREADPOOL_SIZE']) || this.DEFAULT_UV_THREADPOOL_SIZE;   
+    if (threadPoolSize <= this._size) {
+      Console.log(
+        'For correct work of connection pooling libuv\'s thread pool should be correctly set.',
+        'It\'s size shoud be pool size + 1-5.',
+        'Use UV_THREADPOOL_SIZE environment variable to set it'
+      );
+    } 
+  },
+
+	/**
+	 * Get item from pool in syncronous way
+	 * @returns {Object}
+	 */
+	getSync: function () {
+		var newItem,
+			newIndex = this._pool.reduce(function (lessUsedItem, poolItem, poolItemIndex) {
+			if (poolItem.item &&
+				(lessUsedItem === false || poolItem.count < this._pool[lessUsedItem].count)) {
+				return poolItemIndex;
+			}
+			return lessUsedItem;
+		}.bind(this), false);
+		if ((newIndex === false || this._pool[newIndex].count !== 0) && this._pool.length < this._size) {
+			newItem = {
+				count: 1,
+				item: this._allocatorSync()
+			};
+			newItem.itemPromise = Vow.fulfill(newItem.item);
+			if (!newItem.item) {
+				return new Error('can not connect');
+			}
+			this._pool.push(newItem);
+			return newItem.item;
+		}
+		if (newIndex !== false) {
+			return this._pool[newIndex].item;
+		}
+		return new Error('can not get apropriate pool item in syncronous way');
+	},
+
+	/**
+	 * Get item from pool in syncronous way
+	 * @returns {Object}
+	 */
+	getAsync: function () {
+		var newItem,
+			newIndex = this._pool.reduce(function (lessUsedItem, poolItem, poolItemIndex) {
+				if (lessUsedItem === false || poolItem.count < this._pool[lessUsedItem].count) {
+					return poolItemIndex;
+				}
+				return lessUsedItem;
+			}.bind(this), false);
+		if ((newIndex === false || this._pool[newIndex].count !== 0) && this._pool.length < this._size) {
+			newItem = {
+				count: 1,
+				itemPromise: this._allocatorAsync().then(function (item) {
+					newItem.item = item;
+					return Vow.resolve(item);
+				}).fail(function (error) {
+					this._pool = this._pool.filter(function (pooledItem) {
+						return pooledItem !== newItem;
+					});
+					return Vow.reject(error);
+				}.bind(this))
+			};
+			this._pool.push(newItem);
+			return newItem.itemPromise;
+		}
+		if (newIndex !== false) {
+			this._pool[newIndex].count++;
+			return this._pool[newIndex].itemPromise;
+		}
+		return Vow.reject(new Error('pool is zero sized'));
+	},
+
+	/**
+	 * Free used pool item
+	 * @param {Object} item
+	 */
+	free: function (item) {
+		this._pool.forEach(function (pooledItem) {
+			if (item === pooledItem.item) {
+				pooledItem.count --;
+			}
+		});
+	},
+
+	/**
+	 * Remove item from pool.
+	 * usefull, for example, when item is known to be
+   * broken
+   * @param {Object} item
+	 */
+	remove: function (item) {
+		this._pool = this._pool.filter(function (pooledItem) {
+			return item !== pooledItem.item;
+		});
+	}
+};
+
 /* @class represents result of query. contain rows and/or error status
  * */
 var QueryResult = function () {
@@ -44,29 +171,27 @@ var DbDriver = function (db, config) {
   EventEmitter.call(this);
   this.db = db;
   this.config = config;
-  this._connection = false;
-  /* flag. means that now connection in connecting state
-   * @type {Boolean}
-   * @private
-   * */
-  this._connecting = false;
-  /* flag. means that connection is ok
-   * @type {Boolean}
-   * @private
-   * */
-  this._connected  = false;
+	this.config.poolSize = this.config.poolSize || 1;
   this.statistics = false;
+	this._pool = new Pool(
+		this.config.poolSize,
+		this._driverSpecificConnectAsync.bind(this),
+		this._driverSpecificConnectSync.bind(this)
+	);
 };
 util.inherits(DbDriver, EventEmitter);
 /* prepare query to be executed. transform placeholders into form, that driver understands.
  * understand what data corresponds to what placeholder
- * wrap data in internal storage classes, which stores information about how data has to be transformed and escaped (for example array, that will be inserted as one row)
+ * wrap data in internal storage classes,
+ * which stores information about how data has to be transformed and escaped
+ * (for example array, that will be inserted as one row)
  * @private
+ * @param {Object} connection
  * @param {String} query query to execute
  * @param {Object|String|Number} data query arguments
  * @return {{query:String, data:Array}} prepared query and data
  * */
-DbDriver.prototype.prepareQuery = function (query, data) {
+DbDriver.prototype.prepareQuery = function (connection, query, data) {
   var i = 0,
     context = {},
     preparedData  = [],
@@ -91,7 +216,7 @@ DbDriver.prototype.prepareQuery = function (query, data) {
       if (data[placeholderNum] === null || data[placeholderNum] === undefined || !(data[placeholderNum].prepareForQuery instanceof Function)) {
         data[placeholderNum] = this.escapeDefault(data[placeholderNum]);
       }
-      return data[placeholderNum].prepareForQuery(preparedData, placeholderNum, data, context, arguments);
+      return data[placeholderNum].prepareForQuery(connection, preparedData, placeholderNum, data, context, arguments);
     }.bind(this));
   return {query: preparedQuery, data: preparedData};
 };
@@ -99,126 +224,94 @@ DbDriver.prototype.prepareQuery = function (query, data) {
  * has to be implemented in database driver
  * call callback, when connection is ready, or on connection error
  * @private
- * @param {function({Object|Error|null})} callback. function to call, when connection is ready, or connecting fails
- * @return {undefined} nothing has to be returned
+ * @return {Vow} promise to connection object
  * */
-DbDriver.prototype._driverSpecificConnectAsync = function (callback) {
+DbDriver.prototype._driverSpecificConnectAsync = function () {
   throw new Error("_driverSpecificConnectAsync has to be implemented in driver");
 };
 /* connect to database in syncronous mode.
  * has to be implemented by database driver
  * @private
- * @return {null|QueryResult} return null if connection succeeded or return something other,
+ * @return {Object|Error} return instance of Error class connection is failed or
+ * connection othervize
  * that represents connection error
  * */
 DbDriver.prototype._driverSpecificConnectSync = function () {
   throw new Error("_driverSpecificConnectSync has to be implemented in driver");
 };
-/* get connection in asyncronous way.
- * if connection is present and ready then call callback
- * if connection is not ready put current query in queue, that will be executed on connect event
- * if there are no connection initialize connecting process
- * @private
- * @return {undefined} nothing to return;
- * */
-DbDriver.prototype._getConnectionAsync = function (callback) {
-  if (this._connection && this._connected) {
-    //it's no need to emit "connect" because connection is ready
-    //and that means that queue have to be empty(processed on connect event emitted after connection
-    return callback();
-  }
-  if (this._connecting) {
-    return this.once("connect", callback);
-  }
-  this.once("connect", callback);
-  this._driverSpecificConnectAsync(function (error) {
-    this._connected = !Boolean(error);
-    this._connecting = false;
-    this.emit("connect", error);
-  }.bind(this));
-};
-/* get connection in syncronous way
- * if connection is ready and connected just return, to give chance for query to run
- * if connection is in connecting state (_getConnectionAsync was called before) return error
- * if no connection, or it is broken try to reconnect
- * return {null|QueryResult} returns null if connection is ok, or return something other to inform
- * about error
- * */
-DbDriver.prototype._getConnectionSync = function () {
-  var connectionError;
-  if (this._connection && this._connected) {
-    //go on. connection is ok;
-    return null;
-  }
-  if (this._connecting) {
-    //connection process was initialized before
-    //by _getConnectionAsync. return error as nothing better can be done
-    return "currently connecting";
-  }
-  connectionError = this._driverSpecificConnectSync();
-  this._connected = !Boolean(connectionError);
-  //no really need for this, but to prevent possible bugs
-  this._connecting = false;
-  return connectionError;
-};
-/* execure query in apropriate mode
+
+/* execure query in syncronous mode
  * manage connection. connect if not connected
  * handle errors
  * @private
  * @param {String} query query with placeholders
  * @param {Array<{*}>} data  arguments to query
- * @param {function|undefined} callback. callback to call in asyncronous mode. if present -- work in asyncronous mode. if absent -- in syncronous
- * @return {undefined|QueryResult} return QueryResult if working in syncronous mode, or return nothing in syncronous. in asyncronous mode, query result is returned as argument of callback
+ * @return {QueryResult} return QueryResult
  * */
-DbDriver.prototype._query = function (query, data, callback) {
+DbDriver.prototype._querySync = function (query, data) {
   var queryAndData,
-    connectionError,
+    connection,
     result;
-  if (callback === undefined) {
-    connectionError = this._getConnectionSync();
-    if (connectionError) {
-      result = new QueryResult();
-      result.query = query;
-      result.error = connectionError;
-    } else {
-      queryAndData = this.prepareQuery(query, data),
-      result = this.querySync(queryAndData.query, queryAndData.data);
-    }
-    if (this._driverSpecificErrorHandler instanceof Function) {
-      this._driverSpecificErrorHandler(result);
-    }
-    return result;
+  connection = this._pool.getSync();
+  if (connection instanceof Error) {
+    result = new QueryResult();
+    result.query = query;
+    result.error = connection;
+  } else {
+    queryAndData = this.prepareQuery(connection, query, data),
+    result = this._driverSpecificQuerySync(connection, queryAndData.query, queryAndData.data);
+		this._pool.free(connection);
   }
-  return this._getConnectionAsync(function (error) {
-    var result;
-    if (error) {
-      result = new QueryResult();
+  if (this._driverSpecificErrorHandler instanceof Function) {
+    this._driverSpecificErrorHandler(connection, result);
+  }
+  return result;
+};
+
+/* execure query in syncronous mode
+ * manage connection. connect if not connected
+ * handle errors
+ * @private
+ * @param {String} query query with placeholders
+ * @param {Array<{*}>} data  arguments to query
+ * @return {Vow} return promise to QueryResult
+ * */
+
+DbDriver.prototype._queryAsync = function (query, data) {
+	return this._pool.getAsync()
+		.fail(function (error) {
+			var result = new QueryResult();
       result.query = query;
       result.error = error;
-      this._driverSpecificErrorHandler(result);
-      return callback(result);
-    }
-    queryAndData = this.prepareQuery(query, data),
-    this.queryAsync(queryAndData.query, queryAndData.data, function (queryResult) {
-      if (this._driverSpecificErrorHandler instanceof Function) {
-        this._driverSpecificErrorHandler(queryResult);
-      }
-      callback(queryResult);
-    }.bind(this));
-  }.bind(this));
+      this._driverSpecificErrorHandler(null, result);
+			return Vow.reject(result);
+		}.bind(this))
+		.then(function (connection) {
+			var queryAndData = this.prepareQuery(connection, query, data);
+
+			return this._driverSpecificQueryAsync(connection, queryAndData.query, queryAndData.data)
+			.always(function (queryResult) {
+				this._pool.free(connection);
+				if (this._driverSpecificErrorHandler instanceof Function) {
+					this._driverSpecificErrorHandler(connection, queryResult.valueOf());
+				}
+				return queryResult;
+			}.bind(this));
+		}.bind(this));
 };
+
 /* dummy function that does query in syncronous mode
  * has to be provided by database driver.
  * @private
  * */
-DbDriver.prototype.querySync = function () {
+DbDriver.prototype._driverSpecificQuerySync = function () {
   throw new Error('querySync has to be implemented in driver');
 };
 /* dummy function that does query in asyncronous mode
  * has to be provided by database driver.
  * @private
  * */
-DbDriver.prototype.queryAsync = function () {
+DbDriver.prototype._driverSpecificQueryAsync = function () {
   throw new Error('queryAsync has to be implemented in driver');
 };
 /* dummy function that escapes field, table, database and other names
@@ -249,6 +342,20 @@ DbDriver.prototype.enableStatistics = function () {
 DbDriver.prototype.clearStatisics = function () {
   this.statistics = {};
 };
+/**
+ * Save profiling info about query into global storage
+ * @param {String} query
+ * @param {Date} timeStart Query time start
+ */
+DbDriver.prototype._saveInStatistics = function (query, timeStart) {
+	if (this.statistics) {
+		if (this.statistics[query] === undefined) {
+      this.statistics[query] = {count: 0, time: 0};
+    }
+    this.statistics[query].count++;
+    this.statistics[query].time += Date.now() - timeStart;
+	}
+};
 /* run query
  * normalize function arguments to three values: query, arguments for query(empty array if no arguments)  and callback (if present)
  * for convinient usage by deeper level functions
@@ -261,12 +368,10 @@ DbDriver.prototype.clearStatisics = function () {
  * return {QueryResult|undefined} if run in syncronous mode -- return result of query. if run in asyncronous -- return nothing. query result will be returned trough callback
  * */
 DbDriver.prototype.query = function (query) {
-  var callback,
+	var callback,
     timeStart,
-    originalCallback,
     tmp,
     queryData = [];
-  //remove query from arguments
   if (arguments[arguments.length - 1] instanceof Function) {
     callback =  Array.prototype.pop.apply(arguments);
   }
@@ -277,29 +382,17 @@ DbDriver.prototype.query = function (query) {
       queryData.push(arg);
     }
   });
-  if (this.statistics) {
-    timeStart = Date.now();
-    if (callback instanceof Function) {
-      originalCallback = callback;
-      callback = function () {
-        if (this.statistics[query] === undefined) {
-          this.statistics[query] = {count: 0, time: 0};
-        }
-        this.statistics[query].count++;
-        this.statistics[query].time += Date.now() - timeStart;
-        originalCallback.apply(this, arguments);
-      }.bind(this);
-      return this._query(query, queryData, callback);
-    }
-    tmp = this._query(query, queryData, callback);
-    if (this.statistics[query] === undefined) {
-      this.statistics[query] = {count: 0, time: 0};
-    }
-    this.statistics[query].count++;
-    this.statistics[query].time += Date.now() - timeStart;
-    return tmp;
-  }
-  return this._query(query, queryData, callback);
+  timeStart = Date.now();
+	if (!(callback instanceof Function)) {
+		tmp = this._querySync(query, queryData);
+		this._saveInStatistics(query, timeStart);
+		return tmp;
+	}
+	return this._queryAsync(query, queryData).always(function (resultPromise) {
+		this._saveInStatistics(query, timeStart);
+		callback(resultPromise.valueOf());
+		return resultPromise;
+	}.bind(this));
 };
 /* @class  driver for postgresql database
  * @param {String} db database identifier
@@ -308,13 +401,13 @@ DbDriver.prototype.query = function (query) {
 var PostgresDriver = function (db, config) {
   DbDriver.apply(this, arguments);
   //var pg     = require('pg').native;
-  this.Pg     = require('pg');
+  this.Pg = require('pg');
   //TODO set defaults for missing parameters;
 };
 util.inherits(PostgresDriver, DbDriver);
 /* syncronous query dummy function. postgres driver does not provide any posibility to execute syncronous queries
  * */
-PostgresDriver.prototype.querySync = function () {
+PostgresDriver.prototype._driverSpecificQuerySync = function () {
   throw new Error('Postgres driver does not provide synchronous version of query');
 };
 /* driver specific implementation of DbDriver._driverSpecificConnectSync
@@ -328,52 +421,61 @@ PostgresDriver.prototype._driverSpecificConnectSync = function () {
  * handle connection errors
  * @private
  * */
-PostgresDriver.prototype._driverSpecificConnectAsync = function (callback) {
-  this._connection = new this.Pg.Client(this.config);
-  this._connection.connect(callback);
-  this._connection.on('error', function (error) {
-    this._connected = false;
-    this.emit("disconnect");
-  }.bind(this));
+PostgresDriver.prototype._driverSpecificConnectAsync = function () {
+	var defer = Vow.defer(),
+		connection = new this.Pg.Client(this.config);
+	connection.connect(function (error) {
+		if (error) {
+			defer.reject(error);
+		} else {
+			defer.resolve(connection);
+		}
+	});
+  return defer.promise();
 };
 /* driver specific implementation of _driverSpecificErrorHandler.
  * this method is called every time query returns result.
  * it analyzes result and makes decision if connection is alive.
  * if connection is not alive, handle this situation
+ * @param {Object} connection
+ * @param {QueryResult} queryResult
  * */
-PostgresDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
+PostgresDriver.prototype._driverSpecificErrorHandler = function (connection, queryResult) {
   if (queryResult.error) {
     if (queryResult.error.code === 'ECONNREFUSED') {
-      this._connected = false;
-      this.emit("disconnect");
+			this._pool.remove(connection);
     }
   }
 };
 /* run query in asyncronous mode
  * @private
+ * @param {Object} connection instance
  * @param {string} query
  * @param {} data  query arguments
- * @param {function(QueryResult)} callback to be called query is done
- * @return {undefined} returns nothing. result is provided as argument for callback
+ * @return {Vow}
  * */
-PostgresDriver.prototype.queryAsync = function (query, data, callback) {
+PostgresDriver.prototype._driverSpecificQueryAsync = function (connection, query, data) {
+	var defer = Vow.defer();
   try {
     //pg library throws exceptions when calling query
     //in some situation, like when database connection fails
-    this._connection.query(query, data, function (err, data) {
+    connection.query(query, data, function (err, data) {
       var answer = new QueryResult();
       answer.query = query;
       answer.error = err;
       if (!answer.error) {
         answer.rows  = data.rows;
-      }
-      callback(answer);
+				defer.resolve(answer);
+      } else {
+				defer.reject(answer);
+			}
     });
+		return defer.promise();
   } catch (e) {
     var result = new QueryResult();
     result.query = query;
     result.error = e;
-    callback(result);
+		return Vow.reject(result);
   }
 };
 /* create object that represents query argument, that will be used as list of coma separated values for sql IN operator
@@ -384,7 +486,7 @@ PostgresDriver.prototype.queryAsync = function (query, data, callback) {
 PostgresDriver.prototype.inEscape = function (array) {
   return {
     data: array,
-    prepareForQuery: function (preparedData) {
+    prepareForQuery: function (connection, preparedData) {
       var answer = [];
       this.data.forEach(function (item) {
         //Array.push returns new length of array. and that's what we need
@@ -404,7 +506,7 @@ PostgresDriver.prototype.noEscape = function (text) {
   //that's dangerous. Use only if shure
   return {
     data: text,
-    prepareForQuery: function () {
+    prepareForQuery: function (connection) {
       return this.data;
     }
   };
@@ -419,7 +521,7 @@ PostgresDriver.prototype.field = function (field) {
   var self = this;
   return {
     data: field,
-    prepareForQuery: function () {
+    prepareForQuery: function (connection) {
       return self._escapeField(this.data);
     }
   };
@@ -430,12 +532,11 @@ PostgresDriver.prototype.field = function (field) {
  * @return Object
  * */
 PostgresDriver.prototype.escapeString = function (text) {
-  var self = this,
-    argStorage = {data: text};
+  var argStorage = {data: text};
   if (argStorage.data === null || argStorage === undefined) {
     argStorage.data = null;
   }
-  argStorage.prepareForQuery = function (preparedData) {
+  argStorage.prepareForQuery = function (connection, preparedData) {
     //Array.push returns new length of array. and that's what we need
     return '$' + preparedData.push(this.data);
   };
@@ -470,7 +571,7 @@ PostgresDriver.prototype._escapeText = function (text) {
 PostgresDriver.prototype.insertRow = function (row) {
   var self = this,
     argStorage = {data: row};
-  argStorage.prepareForQuery = function (preparedData) {
+  argStorage.prepareForQuery = function (connection, preparedData) {
     var key,
       placeholders = [],
       keys = Object.keys(row).map(function (field) {
@@ -492,7 +593,7 @@ PostgresDriver.prototype.insertRow = function (row) {
 PostgresDriver.prototype.insertMultiRow = function (rows) {
   var self = this,
     argStorage = {data: rows};
-  argStorage.prepareForQuery =  function (preparedData) {
+  argStorage.prepareForQuery =  function (connection, preparedData) {
     var key,
       i,
       j = 1,
@@ -524,7 +625,7 @@ PostgresDriver.prototype.insertMultiRow = function (rows) {
 PostgresDriver.prototype.updateRow = function (row) {
   var self = this,
     argStorage = {data: row};
-  argStorage.prepareForQuery = function (preparedData) {
+  argStorage.prepareForQuery = function (connection, preparedData) {
     var key,
       answer = [];
     for (key in row) {
@@ -554,26 +655,26 @@ util.inherits(MysqlDriver, DbDriver);
  * @return {null| Error} null means that connection is ok. Error represents error, that happens in connection process
  * */
 MysqlDriver.prototype._driverSpecificConnectSync = function () {
+	var connection = new this.Mysql.MysqlConnectionQueued();
   //use this strange way of connecting
   //due to https://github.com/Sannis/node-mysql-libmysqlclient/issues/156 issue
-  this._connection = new this.Mysql.bindings.MysqlConnection();
-  this._connection.initSync();
-  this._connection.setOptionSync(this.Mysql.MYSQL_OPT_LOCAL_INFILE);
-  this._connection.realConnectSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
-  //this._connection = this.Mysql.createConnectionSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
+  connection.initSync();
+  connection.setOptionSync(this.Mysql.MYSQL_OPT_LOCAL_INFILE);
+  connection.realConnectSync(this.config.host, this.config.user, this.config.password, this.config.database, this.config.port);
+
   //connectedSync, even being syncronous, is very fast
   //because it's only kind of getter for filed in instance of
   //internal mysql-libmysqlclient class
-  if (!this._connection.connectedSync()) {
+  if (!connection.connectedSync()) {
     return new Error(util.inspect({
       message: 'can not connect',
       config: this.config,
-      errno: this._connection.connectErrno,
-      error: this._connection.connectError
+      errno: connection.connectErrno,
+      error: connection.connectError
     }, true, null, true));
   }
-  this._connection.setCharsetSync(this.config.charset);
-  return null;
+  connection.setCharsetSync(this.config.charset);
+  return connection;
 };
 /* asyncronous version of _driverSpecificConnectAsync for mysql
  * as mysql-libmysqlclient does not provide asyncronous version of connect
@@ -582,40 +683,45 @@ MysqlDriver.prototype._driverSpecificConnectSync = function () {
  * @param {function({null|Error})} callback to call when connection is ready
  * @return {undefined}  nothing to return
  * */
-MysqlDriver.prototype._driverSpecificConnectAsync = function (callback) {
+MysqlDriver.prototype._driverSpecificConnectAsync = function () {
   //mysql driver has no implementation of asyncronous connect
   //so asycronous version on the base of syncronous
   //of course this will block, but connection has not be wery often, and this has not be problem
-  process.nextTick(callback.bind(this, this._driverSpecificConnectSync()));
+	var connection = this._driverSpecificConnectSync();
+	if (connection instanceof Error) {
+		return Vow.reject(connection);
+	}
+	return Vow.fulfill(connection);
 };
 /* driver specific implementation of _driverSpecificErrorHandler.
  * this method is called every time query returns result.
  * it analyzes result and makes decision if connection is alive.
  * if connection is not alive, handle this situation
  * @private
+ * @param {Object} connection
  * @param {QueryResult} queryResult  intercepted result of query
  * */
-MysqlDriver.prototype._driverSpecificErrorHandler = function (queryResult) {
+MysqlDriver.prototype._driverSpecificErrorHandler = function (connection, queryResult) {
   if (queryResult.error) {
     if (queryResult.error === 'MySQL server has gone away') {
-      this._connected = false;
-      this.emit("disconnect");
+			this._pool.remove(connection);
     }
   }
 };
 /* run query in syncronous mode
  * @private
+ * @param {Object} connection instance
  * @param {string} query
  * @param {} data  query arguments
  * @return {QueryResult}
  * */
-MysqlDriver.prototype.querySync = function (query, data) {
-  var res = this._connection.querySync(query,
+MysqlDriver.prototype._driverSpecificQuerySync = function (connection, query, data) {
+  var res = connection.querySync(query,
       (data.length && data[data.length - 1]) || undefined),
     answer = new QueryResult();
   answer.query = query;
   if (!res) {
-    answer.error = this._connection.errorSync();
+    answer.error = connection.errorSync();
     return answer;
   }
   if (res === true || res === false ||  res.numRowsSync() === 0) {
@@ -629,56 +735,52 @@ MysqlDriver.prototype.querySync = function (query, data) {
 };
 /* run query in asyncronous mode
  * @private
+ * @param {Object} connection instance
  * @param {string} query
  * @param {} data  query arguments
- * @param {function(QueryResult)} callback to be called when query is done
- * @return {undefined} returns nothing. result is provided as argument for callback
+ * @return {Vow}
  * */
-MysqlDriver.prototype.queryAsync = function (query, data, callback) {
-  var self = this,
-    callArguments = [query],
+MysqlDriver.prototype._driverSpecificQueryAsync = function (connection, query, data) {
+  var defer = Vow.defer(),
+		callArguments = [query],
     internalCallback = function (err, res) {
       var answer = new QueryResult();
       answer.query = query;
       if (!res) {
-        answer.error = self._connection.errorSync();
-        process.nextTick(function () {
-          callback(answer);
-        });
-      } else if (res === true || res === false || !res.fieldCount) {
+        answer.error = connection.errorSync();
+				return defer.reject(answer);
+
+      }
+			if (res === true || res === false || !res.fieldCount) {
         //query has no result (INSERT/DELETE/UPDATE something other);
         //but everything is OK
         answer.rows = [];
-        process.nextTick(function () {
-          callback(answer);
-        });
-      } else {
-        res.fetchAll(function (err, rows) {
-          if (err) {
-            answer.error = err;
-            answer.rows  = [];
-          } else {
-            answer.rows  = rows;
-          }
-          process.nextTick(function () {
-            callback(answer);
-          });
-        });
+				return defer.resolve(answer);
       }
+      res.fetchAll(function (err, rows) {
+        if (err) {
+          answer.error = err;
+          answer.rows  = [];
+					return defer.reject(answer);
+        }
+        answer.rows  = rows;
+				defer.resolve(answer);
+      });
     };
   if (data.length) {
     callArguments.push(data.pop());
   }
   callArguments.push(internalCallback);
-  this._connection.query.apply(this._connection, callArguments);
+	connection.query.apply(connection, callArguments);
+	return defer.promise();
 };
 /* escape argument as text with ' symbol. private helper method
  * @private
  * @param {String} text to escape
  * @return {String} escaped string
  * */
-MysqlDriver.prototype._escapeText = function (text) {
-  return '\'' + this._connection.escapeSync(String(text)) + '\'';
+MysqlDriver.prototype._escapeText = function (connection, text) {
+  return '\'' + connection.escapeSync(String(text)) + '\'';
 };
 /* escape identifier (table,database, schema, user name) before placing it in query
  * use ` symbol
@@ -698,7 +800,7 @@ MysqlDriver.prototype._escapeField = function (field) {
  * @private
  * @param {*} data data to be escaped
  * */
-MysqlDriver.prototype._escapeSmart = function (data) {
+MysqlDriver.prototype._escapeSmart = function (connection, data) {
   if (data === null || data === undefined) {
     return 'NULL';
   }
@@ -708,7 +810,7 @@ MysqlDriver.prototype._escapeSmart = function (data) {
   if (typeof (data) === 'number') {
     return data;
   }
-  return '\'' + this._connection.escapeSync(String(data)) + '\'';
+  return '\'' + connection.escapeSync(String(data)) + '\'';
 };
 /* default method for escaping query arguments, without explicitly defined type
  * use _escapeSmart method to be convinient enough
@@ -719,8 +821,8 @@ MysqlDriver.prototype._escapeSmart = function (data) {
 MysqlDriver.prototype.escapeDefault = function (text) {
   var self = this,
     argStorage = {data: text};
-  argStorage.prepareForQuery = function () {
-    return self._escapeSmart(this.data);
+  argStorage.prepareForQuery = function (connection) {
+    return self._escapeSmart(connection, this.data);
   };
   return argStorage;
 };
@@ -732,8 +834,8 @@ MysqlDriver.prototype.escapeDefault = function (text) {
 MysqlDriver.prototype.escapeString = function (text) {
   var self = this,
     argStorage = {data: text};
-  argStorage.prepareForQuery = function () {
-    return self._escapeText(this.data);
+  argStorage.prepareForQuery = function (connection) {
+    return self._escapeText(connection, this.data);
   };
   return argStorage;
 };
@@ -746,7 +848,7 @@ MysqlDriver.prototype.escapeString = function (text) {
 MysqlDriver.prototype.field = function (field) {
   var self = this,
     argStorage = {data: field};
-  argStorage.prepareForQuery = function () {
+  argStorage.prepareForQuery = function (connection) {
     return self._escapeField(this.data);
   };
   return argStorage;
@@ -759,9 +861,9 @@ MysqlDriver.prototype.field = function (field) {
 MysqlDriver.prototype.inEscape = function (array) {
   var self = this,
     argStorage = {data: array};
-  argStorage.prepareForQuery = function () {
+  argStorage.prepareForQuery = function (connection) {
     return this.data.map(function (item) {
-      return self._escapeSmart(item);
+      return self._escapeSmart(connection, item);
     }).join(',');
   };
   return argStorage;
@@ -775,12 +877,12 @@ MysqlDriver.prototype.inEscape = function (array) {
 MysqlDriver.prototype.insertRow = function (row) {
   var self = this,
     argStorage = {data: row};
-  argStorage.prepareForQuery = function () {
+  argStorage.prepareForQuery = function (connection) {
     var names = [],
       values = [],
       key;
     for (key in this.data) {
-      values.push(self._escapeSmart(this.data[key]));
+      values.push(self._escapeSmart(connection, this.data[key]));
       names.push(self._escapeField(key));
     }
     return '(' + names.join(',') + ') VALUES(' + values.join(',') + ')';
@@ -796,7 +898,7 @@ MysqlDriver.prototype.insertRow = function (row) {
 MysqlDriver.prototype.insertMultiRow = function (rows) {
   var self = this,
     argStorage = {data: rows};
-  argStorage.prepareForQuery = function () {
+  argStorage.prepareForQuery = function (connection) {
     var names = [],
       key,
       i,
@@ -809,7 +911,7 @@ MysqlDriver.prototype.insertMultiRow = function (rows) {
     for (i = this.data.length; i--; i) {
       values = [];
       for (key in this.data[i]) {
-        values.push(self._escapeSmart(this.data[i][key]));
+        values.push(self._escapeSmart(connection, this.data[i][key]));
       }
       rows.push('(' + values.join(',') + ')');
     }
@@ -826,11 +928,11 @@ MysqlDriver.prototype.insertMultiRow = function (rows) {
 MysqlDriver.prototype.updateRow = function (row) {
   var self = this,
     argStorage = {data: row};
-  argStorage.prepareForQuery = function () {
+  argStorage.prepareForQuery = function (connection) {
     var keyValuePairs = [],
       key;
     for (key in this.data) {
-      keyValuePairs.push(self._escapeField(key) + '=' + self._escapeSmart(this.data[key]));
+      keyValuePairs.push(self._escapeField(key) + '=' + self._escapeSmart(connection, this.data[key]));
     }
     return keyValuePairs.join(', ');
   };
@@ -843,35 +945,13 @@ MysqlDriver.prototype.updateRow = function (row) {
  * */
 MysqlDriver.prototype.loadDataBuffer = function (buf) {
   var argStorage = {data: buf};
-  argStorage.prepareForQuery = function (preparedData) {
+  argStorage.prepareForQuery = function (connection, preparedData) {
     preparedData.push(this.data);
     //that's some sensless word,
     //used only to make mysql happy with query syntax
     return "'nothing'";
   };
   return argStorage;
-};
-/* class that represents one database
- * @constructor
- * @param {String} dbName identifier of database
- * @param {Object} dbConfiguration object that contains configuration for connection to database
- * */
-var Db = function (dbName, dbConfiguration) {
-  var backendDriver = '';
-  switch (dbConfiguration.driver) {
-  case undefined:
-    throw new Error('Driver for ' + dbName + ' is not defined');
-  case 'postgres':
-    backendDriver = PostgresDriver;
-    break;
-  case 'mysql':
-    backendDriver = MysqlDriver;
-    break;
-  default:
-    throw new Error('Driver ' + dbConfiguration.driver + ' for database ' + dbName + ' is not implemented');
-  }
-  this._backend = new backendDriver(this, dbConfiguration);
-  this.statistics = false;
 };
 /* database conection manager class
  * @constructor

@@ -6,5 +6,8 @@
   "repository": {
     "type": "git",
     "url": "git@github.com:delfrrr/ventum-js.git"
+  },
+  "dependencies": {
+    "vow": "*"
   }
 }
