@@ -8,6 +8,8 @@
     "url": "git@github.com:delfrrr/ventum-js.git"
   },
   "dependencies": {
-    "vow": "*"
+    "vow": "0.4.1",
+    "mysql-libmysqlclient": "1.5.2",
+    "pg": "2.11.1"
   }
 }

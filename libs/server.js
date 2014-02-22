@@ -11,6 +11,7 @@ exports.cls = function (Lib) {
     Request = Lib('request'),
     Console = Lib('console'),
     exec = require('child_process').exec,
+    Vow = require('vow'),
     Server;
   /**
    * @contstructor
@@ -33,14 +34,19 @@ exports.cls = function (Lib) {
       port = port || this.PORT;
       ip = ip || this.IP;
       this._server.listen(port, ip);
-      Console.log('http server started at %d port', port);
+      Console.log('http server started at %s:%s', ip, port);
     },
+
     /**
      * Closing (stoping) http server
      * This method allow to unhook node from console (used in test)
+     * @returns {Vow}
      */
     close: function () {
+      var defer = Vow.defer();
+      this._server.once('close', defer.resolve.bind(defer));
       this._server.close();
+      return defer.promise();
     }
   };
   return Server;

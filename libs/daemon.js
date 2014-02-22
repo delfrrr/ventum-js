@@ -22,6 +22,7 @@ var Helpers = Lib('helpers');
 var Path = require('path');
 var Crypto = require('crypto');
 var Os = require('os');
+var Vow = require('vow');
 /* @constructor
  * class that handles all thing related with start, stop and errors
  * */
@@ -46,6 +47,7 @@ var Daemon = function () {
   //that is used to generate ident's.
   //so use it only as backup
   this.HOST = this.HOST || Os.hostname();
+  this._signalCallbacks = {};
 };
 Daemon.prototype = {
   /* number of tries when killing other instances of service
@@ -155,17 +157,53 @@ Daemon.prototype = {
   _registerHandlers: function () {
     process.on('uncaughtException', this._exceptionHandler.bind(this));
     process.on('exit', this._exitHandler.bind(this));
-    process.on('SIGINT',  this._signalHandler.bind(this));
-    process.on('SIGTERM', this._signalHandler.bind(this));
+    process.on('SIGINT',  this._signalHandler.bind(this, 'SIGINT'));
+    process.on('SIGTERM', this._signalHandler.bind(this, 'SIGTERM'));
   },
+
+  /**
+   * Run on exit callbacks
+   * @param {String} type Exit reason
+   */
+  _execSignalCallbacks: function (type) {
+    if (this._signalCallbacks[type]) {
+      return Vow.allResolved((this._signalCallbacks[type] || []).map(function (callback) {
+        return callback && callback instanceof Function && callback();
+      }));
+    }
+    return Vow.fulfill();
+  },
+  /**
+   * Register function to be executed on signal
+   * (for example on signal handler)
+   * @param {String | String[]} type Signal name
+   * @param {Function} callback
+   */
+  registerSignalCallback: function (type, callback) {
+    if (type instanceof Array) {
+      type.forEach(function (type) {
+        this.registerSignalCallback(type, callback);
+      }.bind(this));
+    } else {
+      this._signalCallbacks[type] = this._signalCallbacks[type] || [];
+      this._signalCallbacks[type].push(callback);
+    }
+  },
+
   /* SIGINT, SIGKILL, SIGTERM handler
    * exit from program (this implies execution of on exit handler, which do everythig required)
    * @private
+   * @param {String} [type] Exit reason (for example signal name)
    * @return {undefined}
    */
-  _signalHandler: function () {
+  _signalHandler: function (type) {
     //this implicitly call _exitHandler
     //_exitHandler cleans pidfile (if any)
+    if (type) {
+      return this._execSignalCallbacks(type).always(function () {
+        process.exit();
+      });
+    }
     process.exit();
   },
   /* processes exit event handler
