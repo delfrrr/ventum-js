@@ -3,7 +3,13 @@ var Util = require('util');
 var Vow = require('vow');
 var QueryResult = Lib('query_result');
 var DbDriver = Lib('db_driver');
-
+var Domain = require('domain');
+var bindToActiveDomain = function (fcn) {
+  if (Domain.active) {
+    return Domain.active.bind(fcn);
+  }
+  return fcn;
+};
 /* mysql database driver
  * @constructor
  * @param {String} db  database identifier
@@ -126,7 +132,8 @@ MysqlDriver.prototype._driverSpecificQueryAsync = function (connection, query, d
         answer.rows = [];
 				return defer.resolve(answer);
       }
-      res.fetchAll(function (err, rows) {
+
+      res.fetchAll(bindToActiveDomain(function (err, rows) {
         if (err) {
           answer.error = err;
           answer.rows  = [];
@@ -134,12 +141,12 @@ MysqlDriver.prototype._driverSpecificQueryAsync = function (connection, query, d
         }
         answer.rows  = rows;
 				defer.resolve(answer);
-      });
+      }));
     };
   if (data.length) {
     callArguments.push(data.pop());
   }
-  callArguments.push(internalCallback);
+  callArguments.push(bindToActiveDomain(internalCallback));
 	connection.query.apply(connection, callArguments);
 	return defer.promise();
 };

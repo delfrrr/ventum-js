@@ -119,6 +119,14 @@ exports.cls = function () {
         postBody = QueryString.parse(postBody.toString());
         callback(null, postBody);
       });
+    },
+
+    /**
+     * Bind all internals of object to domain
+     * @param {Object} domain
+     */
+    bindToDomain: function (domain) {
+      domain.add(this.req);
     }
   };
   return Request;

@@ -175,6 +175,16 @@ exports.cls = function () {
       this.headers({'Location': url});
       this.status(httpStatus);
       this.end();
+    },
+
+    /**
+     * Bind object with all it's internals
+     * to domain
+     * @param {Object} domain
+     */
+    bindToDomain: function (domain) {
+      domain.add(this._timeout);
+      domain.add(this.res);
     }
   };
   return Response;
