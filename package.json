@@ -1,7 +1,7 @@
 {
   "name": "ventum",
   "main": "./libs/lib.js",
-  "version": "v0.1.0",
+  "version": "0.1.0",
   "description": "simple web framework and helpers libraries",
   "repository": {
     "type": "git",
@@ -11,7 +11,7 @@
     "vow": "0.4.1"
   },
   "peerDependencies": {
-    "mysql-libmysqlclient": "1.5.2",
+    "mysql-libmysqlclient": "1.6.0",
     "pg": "2.11.1"
   }
 }
