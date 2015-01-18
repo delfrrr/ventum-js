@@ -3,6 +3,7 @@ var Domain = require('domain');
 var Console = Lib('console');
 var QueryResult = Lib('query_result');
 var Pool = Lib('connection_pool');
+var Vow = require('vow');
 
 /* @class parent class for database driver classes. defines interface and some common code
  * @param {String} db database identifier
@@ -249,4 +250,4 @@ DbDriver.prototype.query = function (query) {
 };
 module.exports.cls = function () {
   return DbDriver;
-}
+};
